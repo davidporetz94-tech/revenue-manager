@@ -10,9 +10,11 @@ from app.services.portfolio_narrative_service import generate_portfolio_narrativ
 
 
 def assemble_portfolio_slide_deck(
-    cross_property_data: dict,
-    diagnosis: dict,
-    action_plan: dict,
+    run_id: str = "",
+    metrics: dict | None = None,
+    cross_property_data: dict | None = None,
+    diagnosis: dict | None = None,
+    action_plan: dict | None = None,
     claude_client=None,
 ) -> dict:
     """Assemble the portfolio-level slide deck.
@@ -29,6 +31,14 @@ def assemble_portfolio_slide_deck(
     Returns:
         Complete portfolio slide deck JSON.
     """
+    # Support both calling conventions: metrics= (from API) or cross_property_data= (direct)
+    if cross_property_data is None:
+        cross_property_data = metrics or {}
+    if diagnosis is None:
+        diagnosis = {}
+    if action_plan is None:
+        action_plan = {}
+
     narratives, is_fallback = generate_portfolio_narratives(
         cross_property_data, diagnosis, action_plan, claude_client,
     )

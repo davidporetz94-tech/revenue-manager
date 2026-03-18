@@ -220,7 +220,7 @@ def run_portfolio_diagnostic(
                     code: [{"type": f["type"], "severity": f["severity"]} for f in flags]
                     for code, flags in prop_flags.items()
                 }
-                for name, prop_flags in portfolio_metrics["all_flags"].items()
+                for name, prop_flags in all_flags.items()
             },
         }, indent=2)
 
@@ -287,51 +287,63 @@ def _fallback_portfolio_diagnosis(portfolio_metrics: dict) -> dict:
     """Generate fallback portfolio diagnosis when Claude is unavailable."""
     agg = portfolio_metrics["aggregate"]
 
-    # Score based on blended occupancy and total burn
-    occ = agg["blended_occupancy"]
-    if occ < 0.80:
-        portfolio_score = 30
-    elif occ < 0.85:
-        portfolio_score = 45
-    elif occ < 0.90:
-        portfolio_score = 55
-    elif occ < 0.95:
-        portfolio_score = 70
-    else:
-        portfolio_score = 85
+    # Use revenue efficiency if available, else fall back to occupancy-based scoring
+    portfolio_score = agg.get("portfolio_revenue_efficiency", 0)
+    if portfolio_score == 0:
+        occ = agg.get("blended_occupancy", 0)
+        if occ < 0.80:
+            portfolio_score = 30
+        elif occ < 0.85:
+            portfolio_score = 45
+        elif occ < 0.90:
+            portfolio_score = 55
+        elif occ < 0.95:
+            portfolio_score = 70
+        else:
+            portfolio_score = 85
 
     property_assessments = []
     property_rankings = []
     for prop_name, pdata in portfolio_metrics["properties"].items():
-        pm = pdata["portfolio_metrics"]
-        prop_occ = pm.get("blended_occupancy", 0)
-        prop_vacant = pm.get("total_vacant", 0)
-        prop_burn = sum(
-            ut["revenue_metrics"]["daily_vacancy_burn"]
-            for ut in pdata["unit_type_metrics"].values()
-        )
+        prop_occ_rate = 0
+        prop_vacant = pdata.get("total_vacant", 0)
+        prop_rev_eff = pdata.get("revenue_efficiency", 0)
+        prop_gap = pdata.get("revenue_gap", 0)
+        pm = pdata.get("portfolio_metrics", {})
+        prop_occ_rate = pm.get("blended_occupancy", 0)
 
-        # Score per property
-        if prop_occ < 0.82:
-            score, grade = 35, "ACTION_NEEDED"
-        elif prop_occ < 0.90:
-            score, grade = 55, "ACTION_NEEDED"
-        elif prop_occ < 0.95:
-            score, grade = 72, "WATCH"
+        prop_vacancy_cost = pdata.get("total_monthly_vacancy_cost", 0)
+
+        # Use revenue efficiency for grade if available
+        if prop_rev_eff >= 85:
+            score, grade = int(prop_rev_eff), "OPTIMIZED"
+        elif prop_rev_eff >= 70:
+            score, grade = int(prop_rev_eff), "OPPORTUNITY"
+        elif prop_rev_eff >= 55:
+            score, grade = int(prop_rev_eff), "IMBALANCED"
+        elif prop_rev_eff >= 40:
+            score, grade = int(prop_rev_eff), "DISTRESSED"
+        elif prop_rev_eff > 0:
+            score, grade = int(prop_rev_eff), "CRISIS"
         else:
-            score, grade = 85, "HEALTHY"
-
-        prop_flags = portfolio_metrics["all_flags"].get(prop_name, {})
-        total_flags = sum(len(f) for f in prop_flags.values())
+            # Fallback to occupancy-based
+            if prop_occ_rate < 0.82:
+                score, grade = 35, "CRISIS"
+            elif prop_occ_rate < 0.90:
+                score, grade = 55, "IMBALANCED"
+            elif prop_occ_rate < 0.95:
+                score, grade = 72, "OPPORTUNITY"
+            else:
+                score, grade = 85, "OPTIMIZED"
 
         property_assessments.append({
             "property_name": prop_name,
             "health_score": score,
             "grade": grade,
             "key_findings": [
-                f"{prop_vacant} vacant units, {prop_occ:.0%} occupancy",
-                f"Daily burn: ${prop_burn:,.0f}/day",
-                f"{total_flags} pricing flags across unit types",
+                f"{prop_vacant} vacant units, {prop_occ_rate:.0%} occupancy",
+                f"Revenue gap: ${prop_gap:,.0f}/mo",
+                f"Revenue efficiency: {prop_rev_eff:.0f}%",
             ],
             "recommended_actions": [],
         })
@@ -339,21 +351,25 @@ def _fallback_portfolio_diagnosis(portfolio_metrics: dict) -> dict:
             "property": prop_name,
             "score": score,
             "grade": grade,
-            "daily_burn": prop_burn,
+            "revenue_gap": prop_gap,
         })
 
     property_rankings.sort(key=lambda x: x["score"])
 
+    total_gap = agg.get("total_revenue_gap", 0)
+    total_renewal = agg.get("total_renewal_opportunity", 0)
+    prop_count = len(portfolio_metrics["properties"])
+
     return {
         "cross_property_assessment": {
-            "summary": f"Portfolio has {agg['total_vacant']} vacant units across {agg['property_count']} properties, burning ${agg['total_daily_burn']:,.0f}/day.",
+            "summary": f"Portfolio has {agg.get('total_vacant', 0)} vacant units across {prop_count} properties. Revenue gap: ${total_gap:,.0f}/mo.",
             "portfolio_score": portfolio_score,
             "property_rankings": property_rankings,
             "cross_property_patterns": [],
             "top_3_priorities": [
-                f"Address vacancy at {agg['worst_property']} (highest burn)",
-                f"Total portfolio burn: ${agg['total_daily_burn']:,.0f}/day = ${agg['total_monthly_cost']:,.0f}/month",
-                f"Blended occupancy: {occ:.0%}",
+                f"Total revenue gap: ${total_gap:,.0f}/mo",
+                f"Renewal opportunity: ${total_renewal:,.0f}/yr",
+                f"Blended occupancy: {agg.get('blended_occupancy', 0):.0%}",
             ],
         },
         "property_assessments": property_assessments,
@@ -371,8 +387,9 @@ def _fallback_portfolio_action_plan(portfolio_metrics: dict) -> dict:
             {"phase_number": 4, "name": "Optimization", "days": "22-30", "actions": []},
         ],
         "revenue_impact_summary": {
-            "current_portfolio_daily_burn": agg["total_daily_burn"],
-            "current_portfolio_monthly_cost": agg["total_monthly_cost"],
-            "projected_monthly_savings": agg["total_monthly_cost"] * 0.3,
+            "total_revenue_gap_monthly": agg.get("total_revenue_gap", 0),
+            "total_renewal_opportunity": agg.get("total_renewal_opportunity", 0),
+            "portfolio_revenue_efficiency": agg.get("portfolio_revenue_efficiency", 0),
+            "total_monthly_vacancy_cost": agg.get("total_monthly_vacancy_cost", 0),
         },
     }
