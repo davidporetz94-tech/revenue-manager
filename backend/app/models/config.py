@@ -26,5 +26,6 @@ class ClientConfig(Base):
     lease_term_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     experiment_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     amenity_benchmarks: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    revenue_efficiency_zones: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)

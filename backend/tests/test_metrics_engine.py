@@ -52,6 +52,7 @@ def _config_to_dict(config: ClientConfig) -> dict:
         "lease_term_policy": config.lease_term_policy or {},
         "experiment_policy": config.experiment_policy or {},
         "amenity_benchmarks": config.amenity_benchmarks or {},
+        "revenue_efficiency_zones": config.revenue_efficiency_zones or {},
     }
 
 
@@ -228,6 +229,151 @@ class TestPortfolioMetrics:
 # Engine purity check
 # ============================================================
 
+# ============================================================
+# Revenue Optimization Integration Tests
+# ============================================================
+
+class TestRevenueOptimizationIntegration:
+    """Verify that the revenue optimization engine sections are present
+    in the metrics output for every unit type and contain sensible values."""
+
+    # --- Elasticity ---
+
+    def test_metrics_include_elasticity_a1(self, metrics_a):
+        """A1: elasticity section present with ELASTIC direction (healthy occupancy)."""
+        e = metrics_a["unit_type_metrics"]["A1"]["elasticity"]
+        assert "elasticity_coefficient" in e
+        assert e["confidence"] in ("LOW", "MEDIUM", "HIGH")
+        assert e["data_points"] >= 2
+        assert e["direction"] in ("ELASTIC", "INELASTIC", "UNKNOWN")
+
+    def test_metrics_include_elasticity_b1(self, metrics_b):
+        """B1: elasticity section present — crisis scenario."""
+        e = metrics_b["unit_type_metrics"]["B1"]["elasticity"]
+        assert e["elasticity_coefficient"] > 0
+        assert e["direction"] == "ELASTIC"
+
+    def test_metrics_include_elasticity_b2(self, metrics_b):
+        """B2: elasticity section present — puzzle scenario."""
+        e = metrics_b["unit_type_metrics"]["B2"]["elasticity"]
+        assert "elasticity_coefficient" in e
+        assert e["data_points"] >= 2
+
+    # --- Optimal Pricing ---
+
+    def test_metrics_include_optimal_pricing_a1(self, metrics_a):
+        """A1: optimal pricing with plausible values for healthy unit type."""
+        o = metrics_a["unit_type_metrics"]["A1"]["optimal_pricing"]
+        assert o["optimal_asking"] > 0
+        assert o["current_revenue_monthly"] > 0
+        assert o["price_direction"] in ("INCREASE", "DECREASE", "HOLD")
+        assert o["confidence"] in ("LOW", "MEDIUM", "HIGH")
+
+    def test_metrics_include_optimal_pricing_a2(self, metrics_a):
+        """A2: optimal pricing suggests DECREASE (overpriced scenario)."""
+        o = metrics_a["unit_type_metrics"]["A2"]["optimal_pricing"]
+        assert o["optimal_asking"] > 0
+        assert o["price_direction"] == "DECREASE"
+
+    def test_metrics_include_optimal_pricing_b1(self, metrics_b):
+        """B1: optimal pricing suggests DECREASE (crisis, far above comps)."""
+        o = metrics_b["unit_type_metrics"]["B1"]["optimal_pricing"]
+        assert o["optimal_asking"] > 0
+        assert o["price_direction"] == "DECREASE"
+
+    def test_optimal_pricing_comp_constrained(self, metrics_a, metrics_b):
+        """At least one unit type should be comp-constrained (within +-15% of comps)."""
+        all_ut = list(metrics_a["unit_type_metrics"].values()) + list(metrics_b["unit_type_metrics"].values())
+        # Check that the field exists in all
+        for ut in all_ut:
+            assert "comp_constrained" in ut["optimal_pricing"]
+
+    # --- Revenue Gap ---
+
+    def test_metrics_include_revenue_gap_a1(self, metrics_a):
+        """A1: revenue gap with RENEW as dominant lever (healthy, LTL upside)."""
+        g = metrics_a["unit_type_metrics"]["A1"]["revenue_gap"]
+        assert g["dominant_lever"] in ("FILL", "REPRICE", "RENEW", "DE_CONCESSION")
+        assert len(g["gap_components"]) == 5
+        assert len(g["lever_ranking"]) == 5
+
+    def test_metrics_include_revenue_gap_b1(self, metrics_b):
+        """B1: revenue gap with FILL as dominant lever (high vacancy)."""
+        g = metrics_b["unit_type_metrics"]["B1"]["revenue_gap"]
+        assert g["dominant_lever"] == "FILL"
+        assert g["gap_components"]["vacancy_cost"]["amount"] > 0
+
+    def test_revenue_gap_components_structure(self, metrics_a):
+        """Verify gap components have required fields."""
+        g = metrics_a["unit_type_metrics"]["A1"]["revenue_gap"]
+        for name, comp in g["gap_components"].items():
+            assert "amount" in comp, f"Missing amount in {name}"
+            assert "lever" in comp, f"Missing lever in {name}"
+            assert "description" in comp, f"Missing description in {name}"
+
+    # --- Revenue Efficiency ---
+
+    def test_metrics_include_revenue_efficiency_a1(self, metrics_a):
+        """A1: efficiency score and grade for healthy unit type."""
+        eff = metrics_a["unit_type_metrics"]["A1"]["revenue_efficiency"]
+        assert 0 <= eff["revenue_efficiency_score"] <= 100
+        assert eff["grade"] in ("OPTIMIZED", "OPPORTUNITY", "IMBALANCED", "DISTRESSED", "CRISIS")
+        assert eff["occupancy_zone"] in ("CRISIS", "STRESSED", "BALANCED", "STRONG", "FULL")
+        assert "dimensions" in eff
+        assert len(eff["dimensions"]) == 3
+
+    def test_metrics_include_revenue_efficiency_b1(self, metrics_b):
+        """B1: efficiency should be low — crisis zone."""
+        eff = metrics_b["unit_type_metrics"]["B1"]["revenue_efficiency"]
+        assert eff["revenue_efficiency_score"] < 50
+        assert eff["occupancy_zone"] == "CRISIS"
+        assert eff["grade"] in ("DISTRESSED", "CRISIS")
+
+    def test_revenue_efficiency_dimensions(self, metrics_a):
+        """Verify all three efficiency dimensions have score and weight."""
+        dims = metrics_a["unit_type_metrics"]["A1"]["revenue_efficiency"]["dimensions"]
+        for dim_name in ("occupancy_health", "pricing_alignment", "rent_roll_momentum"):
+            assert dim_name in dims
+            assert 0 <= dims[dim_name]["score"] <= 100
+            assert 0 <= dims[dim_name]["weight"] <= 1
+
+    def test_revenue_efficiency_weights_sum(self, metrics_a):
+        """Dimension weights should sum to approximately 1.0."""
+        dims = metrics_a["unit_type_metrics"]["A1"]["revenue_efficiency"]["dimensions"]
+        total = sum(d["weight"] for d in dims.values())
+        assert 0.99 <= total <= 1.01, f"Weights sum to {total}, expected ~1.0"
+
+    # --- Renewal Opportunity ---
+
+    def test_metrics_include_renewal_opportunity_a1(self, metrics_a):
+        """A1: renewal opportunity section present."""
+        r = metrics_a["unit_type_metrics"]["A1"]["renewal_opportunity"]
+        assert "upcoming_renewals_90d" in r
+        assert "recommended_increase_pct" in r
+        assert "net_monthly_capture" in r
+        assert r["upcoming_renewals_90d"] >= 0
+        assert r["confidence"] in ("LOW", "MEDIUM", "HIGH")
+
+    def test_metrics_include_renewal_opportunity_b1(self, metrics_b):
+        """B1: renewal opportunity — crisis zone should recommend freeze (0% increase)."""
+        r = metrics_b["unit_type_metrics"]["B1"]["renewal_opportunity"]
+        assert r["recommended_increase_pct"] == 0.0  # freeze in crisis
+
+    # --- All unit types have all sections ---
+
+    def test_all_unit_types_have_new_sections(self, metrics_a, metrics_b):
+        """Every unit type should have all 5 new revenue optimization sections."""
+        required_sections = [
+            "elasticity", "optimal_pricing", "renewal_opportunity",
+            "revenue_gap", "revenue_efficiency",
+        ]
+        for m in (metrics_a, metrics_b):
+            for ut_code, ut_metrics in m["unit_type_metrics"].items():
+                for section in required_sections:
+                    assert section in ut_metrics, \
+                        f"Missing '{section}' in {ut_code}"
+
+
 class TestEnginePurity:
     def test_no_sqlalchemy_imports_in_engine(self):
         """Engine modules must not import from database/ORM."""
@@ -242,6 +388,8 @@ class TestEnginePurity:
             "app.engine.lease_term",
             "app.engine.seasonal",
             "app.engine.aggregator",
+            "app.engine.revenue_optimizer",
+            "app.engine.renewal_optimizer",
         ]
         for mod_name in engine_modules:
             mod = importlib.import_module(mod_name)

@@ -25,18 +25,27 @@ DEFAULT_CONFIG = {
         "max_discount_vs_comps_pct": 0.05,
         "max_asking_vs_predicted_pct": 0.04,
         "acceptable_days_on_market": 21,
+        "rent_push_gap_pct": 0.03,
+        "underpriced_vs_comps_pct": 0.03,
+        "max_upward_experiment_spread_pct": 0.05,
     },
     "concession_policy": {
         "concessions_allowed": True,
         "max_concession_weeks_free": 8,
         "prefer_concession_over_base_cut": True,
         "concession_triggers": {"min_exposure_pct": 0.12, "min_days_on_market": 21},
+        "removal_occupancy_threshold": 0.93,
+        "removal_exposure_threshold": 0.10,
     },
     "renewal_policy": {
         "max_renewal_increase_pct": 0.08,
         "retention_priority": "BALANCED",
         "turnover_cost_estimate": 1500,
         "never_increase_above_occupancy_threshold": 0.88,
+        "freeze_below_occupancy": 0.82,
+        "make_ready_cost_estimate": 2500,
+        "base_non_renewal_rate": 0.10,
+        "increase_sensitivity_factor": 5.0,
     },
     "lease_term_policy": {
         "preferred_term_months": 14,
@@ -57,6 +66,19 @@ DEFAULT_CONFIG = {
     "amenity_benchmarks": {
         "expected_amenity_pct_of_rent": 0.06,
         "amenity_audit_threshold_pct": 0.08,
+    },
+    "revenue_efficiency_zones": {
+        "crisis_below": 0.82,
+        "stressed_below": 0.89,
+        "balanced_below": 0.94,
+        "strong_below": 0.97,
+        "crisis_weights": [0.60, 0.15, 0.25],
+        "stressed_weights": [0.45, 0.30, 0.25],
+        "balanced_weights": [0.30, 0.35, 0.35],
+        "strong_weights": [0.15, 0.45, 0.40],
+        "full_weights": [0.10, 0.50, 0.40],
+        "seasonal_weight_shift": 0.05,
+        "max_turnover_probability": 0.60,
     },
 }
 
@@ -84,6 +106,7 @@ def seed_config(db: Session, ids: dict) -> None:
             lease_term_policy=DEFAULT_CONFIG["lease_term_policy"],
             experiment_policy=DEFAULT_CONFIG["experiment_policy"],
             amenity_benchmarks=DEFAULT_CONFIG["amenity_benchmarks"],
+            revenue_efficiency_zones=DEFAULT_CONFIG["revenue_efficiency_zones"],
             created_at=datetime.utcnow(),
             created_by=ids["user_id"],
         )

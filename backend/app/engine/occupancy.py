@@ -29,6 +29,7 @@ def compute_occupancy_metrics(units_data: list[dict]) -> dict:
     vacancy_rate = round_half_up(safe_divide(vacant_count, total), 2)
 
     return {
+        "total_units": total,
         "occupied": occupied_count,
         "vacant": vacant_count,
         "on_notice": on_notice_count,
