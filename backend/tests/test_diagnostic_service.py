@@ -19,36 +19,40 @@ from app.services.claude_client import ClaudeClient
 REF_DATE = date(2026, 3, 15)
 
 
-# Realistic mock Claude responses
+# Realistic mock Claude responses — updated for revenue optimization
 MOCK_DIAGNOSIS_B = {
     "unit_type_assessments": [
         {
             "unit_type": "B1",
             "health_score": 25,
-            "score_reasoning": "Two CRITICAL flags, 79% occupancy in freefall, $91 above every comp. This unit type is hemorrhaging revenue at $254/day.",
-            "grade": "CRITICAL",
-            "root_cause": "Asking rent $1,525 is $91 above comp average of $1,434 in a declining market. Comps dropped $41 in 3 months while B1 barely adjusted.",
-            "key_findings": ["$91 above comps", "Negative LTL", "Exposure 25% and deteriorating"],
+            "grade": "CRISIS",
+            "score_reasoning": "Revenue efficiency score 25. Dominant vacancy at 79% occupancy, asking $91 above comps in a declining market.",
+            "dominant_lever": "FILL",
+            "revenue_gap_monthly": 12500,
+            "root_cause": "Asking rent $1,525 is $91 above comp average of $1,434 in a declining market. FILL lever dominates: $7,625/mo vacancy cost.",
+            "key_findings": ["Revenue gap: $12,500/mo", "Dominant lever: FILL", "$91 above comps", "Negative LTL"],
             "anomalies": ["Executed rent $1,655 far above asking — legacy leases from stronger market"],
             "recommended_actions": [
-                {"action_type": "REDUCE_ASKING_RENT", "priority": 1, "description": "Cut asking from $1,525 to $1,475", "target_value": 1475, "expected_impact_monthly": 2540, "confidence": "HIGH", "reasoning": "CRITICAL flags with high-confidence pricing root cause"},
-                {"action_type": "OFFER_MOVE_IN_CONCESSION", "priority": 2, "description": "4 weeks free on 2 stalest units", "target_value": None, "expected_impact_monthly": None, "confidence": "HIGH", "reasoning": "Accelerate fill on longest-vacant units"},
-                {"action_type": "FREEZE_RENEWAL_INCREASES", "priority": 3, "description": "Freeze all B1 renewal increases", "target_value": None, "expected_impact_monthly": None, "confidence": "HIGH", "reasoning": "Negative LTL — in-place tenants already pay above market"},
-                {"action_type": "AUDIT_AMENITY_PRICING", "priority": 4, "description": "Audit $125 amenity premium (8.2% of predicted)", "target_value": None, "expected_impact_monthly": None, "confidence": "MEDIUM", "reasoning": "Above 8% audit threshold"},
+                {"action_type": "REDUCE_ASKING_RENT", "lever": "REPRICE", "priority": 1, "description": "Cut asking from $1,525 to $1,475", "target_value": 1475, "expected_impact_monthly": 2540, "confidence": "HIGH", "downside_risk": "May lower renewal benchmarks", "reasoning": "CRISIS grade with FILL dominant lever — reduce price to accelerate fill"},
+                {"action_type": "OFFER_MOVE_IN_CONCESSION", "lever": "FILL", "priority": 2, "description": "4 weeks free on 2 stalest units", "target_value": None, "expected_impact_monthly": 3050, "confidence": "HIGH", "downside_risk": "Concession drag if market recovers", "reasoning": "Accelerate fill on longest-vacant units"},
+                {"action_type": "FREEZE_RENEWAL_INCREASES", "lever": "RENEW", "priority": 3, "description": "Freeze all B1 renewal increases", "target_value": None, "expected_impact_monthly": 0, "confidence": "HIGH", "downside_risk": "Miss renewal revenue capture", "reasoning": "Negative LTL — in-place tenants already pay above market"},
+                {"action_type": "AUDIT_AMENITY_PRICING", "lever": "REPRICE", "priority": 4, "description": "Audit $125 amenity premium (8.2% of predicted)", "target_value": None, "expected_impact_monthly": 0, "confidence": "MEDIUM", "downside_risk": "None significant", "reasoning": "Above 8% audit threshold"},
             ],
-            "experiment_design": {"recommended": False, "arms": [], "observation_window_days": 14, "convergence_rule": "", "rationale": "Direct action preferred — 2 CRITICAL flags with high-confidence pricing root cause"},
+            "experiment_design": {"recommended": False, "arms": [], "observation_window_days": 14, "convergence_rule": "", "rationale": "Direct action preferred — CRISIS grade, no time for experiments"},
         },
         {
             "unit_type": "B2",
             "health_score": 58,
-            "score_reasoning": "Priced at comps but 6 units vacant averaging 28 days. This is a puzzle — the problem may not be price.",
-            "grade": "ACTION_NEEDED",
-            "root_cause": "Priced at comps ($1,654 vs $1,662 avg) but not leasing. Non-price factors likely — unit condition, listing quality, or tour conversion.",
-            "key_findings": ["6 vacant at 28 avg days", "Priced at comps", "$9,924/mo vacancy cost"],
+            "grade": "IMBALANCED",
+            "score_reasoning": "Revenue efficiency score 58. Priced at comps but 6 units vacant averaging 28 days — one dimension dragging.",
+            "dominant_lever": "FILL",
+            "revenue_gap_monthly": 9924,
+            "root_cause": "Priced at comps ($1,654 vs $1,662 avg) but not leasing. FILL lever dominates. Non-price factors likely.",
+            "key_findings": ["Revenue gap: $9,924/mo", "Dominant lever: FILL", "6 vacant at 28 avg days", "Priced at comps"],
             "anomalies": ["High DOM despite competitive pricing suggests non-price friction"],
             "recommended_actions": [
-                {"action_type": "LAUNCH_PRICE_EXPERIMENT", "priority": 1, "description": "Three-arm experiment: control $1,654, price test $1,600, concession test $1,654 + 2wk free", "target_value": 1600, "expected_impact_monthly": 3000, "confidence": "MEDIUM", "reasoning": "Medium confidence — need data to determine if price or non-price"},
-                {"action_type": "INVESTIGATE_NON_PRICE_FACTORS", "priority": 2, "description": "Audit tour conversion, unit condition, listing photos", "target_value": None, "expected_impact_monthly": None, "confidence": "MEDIUM", "reasoning": "Competitive pricing but high vacancy suggests non-price issues"},
+                {"action_type": "LAUNCH_PRICE_EXPERIMENT", "lever": "REPRICE", "priority": 1, "description": "Three-arm experiment: control $1,654, price test $1,600, concession test $1,654 + 2wk free", "target_value": 1600, "expected_impact_monthly": 3000, "confidence": "MEDIUM", "downside_risk": "Experiment delays lease-up by 14 days", "reasoning": "IMBALANCED grade with medium confidence — experimentation needed"},
+                {"action_type": "INVESTIGATE_NON_PRICE_FACTORS", "lever": "FILL", "priority": 2, "description": "Audit tour conversion, unit condition, listing photos", "target_value": None, "expected_impact_monthly": 0, "confidence": "MEDIUM", "downside_risk": "None", "reasoning": "Competitive pricing but high vacancy suggests non-price issues"},
             ],
             "experiment_design": {
                 "recommended": True,
@@ -59,15 +63,15 @@ MOCK_DIAGNOSIS_B = {
                 ],
                 "observation_window_days": 14,
                 "convergence_rule": "Price wins → converge $1,600. Concession wins → extend. No winner → non-price investigation.",
-                "rationale": "6 vacant units allow three-arm test. Medium confidence in root cause warrants experimentation.",
+                "rationale": "6 vacant units allow three-arm test. Medium confidence warrants experimentation.",
             },
         },
     ],
     "portfolio_assessment": {
-        "summary": "Property B requires immediate attention. B1 is in crisis from overpricing. B2 is a diagnostic puzzle.",
-        "cross_property_patterns": ["Both unit types have elevated DOM", "Vacancy concentrated in larger units"],
+        "summary": "Property B requires immediate attention. B1 is in CRISIS from overpricing. B2 is IMBALANCED — a diagnostic puzzle.",
+        "cross_unit_type_risks": ["Both unit types have elevated DOM", "Vacancy concentrated in larger units"],
         "overall_portfolio_score": 42,
-        "top_3_priorities": ["B1 price reduction", "B2 experiment launch", "B1 amenity audit"],
+        "top_3_priorities": ["B1 price reduction (FILL lever)", "B2 experiment launch (REPRICE lever)", "B1 amenity audit"],
     },
     "further_investigation": [
         {"area": "B2 tour conversion", "reason": "Competitive pricing but high vacancy", "data_needed": "Tour-to-application ratio"},
@@ -206,17 +210,29 @@ class TestDiagnosticPipeline:
         assert "unit_type_assessments" in diag
         assert len(diag["unit_type_assessments"]) == 2
 
-    def test_b1_grade_critical(self, diagnostic_run_b):
+    def test_b1_grade_crisis(self, diagnostic_run_b):
         diag = diagnostic_run_b.diagnosis_json
         b1 = [a for a in diag["unit_type_assessments"] if a["unit_type"] == "B1"][0]
-        assert b1["grade"] == "CRITICAL"
-        assert b1["health_score"] < 35
+        assert b1["grade"] == "CRISIS"
+        assert b1["health_score"] < 40
 
-    def test_b2_grade_action_needed(self, diagnostic_run_b):
+    def test_b2_grade_imbalanced(self, diagnostic_run_b):
         diag = diagnostic_run_b.diagnosis_json
         b2 = [a for a in diag["unit_type_assessments"] if a["unit_type"] == "B2"][0]
-        assert b2["grade"] == "ACTION_NEEDED"
-        assert 50 <= b2["health_score"] <= 65
+        assert b2["grade"] == "IMBALANCED"
+        assert 50 <= b2["health_score"] <= 69
+
+    def test_b1_has_dominant_lever(self, diagnostic_run_b):
+        diag = diagnostic_run_b.diagnosis_json
+        b1 = [a for a in diag["unit_type_assessments"] if a["unit_type"] == "B1"][0]
+        assert "dominant_lever" in b1
+        assert b1["dominant_lever"] in ("FILL", "REPRICE", "RENEW", "DE_CONCESSION")
+
+    def test_b1_has_revenue_gap(self, diagnostic_run_b):
+        diag = diagnostic_run_b.diagnosis_json
+        b1 = [a for a in diag["unit_type_assessments"] if a["unit_type"] == "B1"][0]
+        assert "revenue_gap_monthly" in b1
+        assert b1["revenue_gap_monthly"] > 0
 
     def test_action_plan_populated(self, diagnostic_run_b):
         plan = diagnostic_run_b.action_plan_json
@@ -286,7 +302,7 @@ class TestExperimentDesign:
 
 class TestFallbackDiagnosis:
     def test_fallback_on_claude_failure(self, db):
-        """When Claude fails, fallback produces structured diagnosis."""
+        """When Claude fails, fallback produces structured diagnosis with revenue efficiency data."""
         from app.services.diagnostic_service import _fallback_diagnosis
         from app.services.metrics_engine import compute_property_metrics
         from app.services.flag_generator import generate_flags
@@ -296,7 +312,7 @@ class TestFallbackDiagnosis:
         config_dict = {k: getattr(config, k) or {} for k in [
             "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
             "concession_policy", "renewal_policy", "lease_term_policy",
-            "experiment_policy", "amenity_benchmarks",
+            "experiment_policy", "amenity_benchmarks", "revenue_efficiency_zones",
         ]}
         metrics = compute_property_metrics(db, str(prop.id), config_dict, REF_DATE)
         all_flags = {code: generate_flags(m, config_dict) for code, m in metrics["unit_type_metrics"].items()}
@@ -306,5 +322,135 @@ class TestFallbackDiagnosis:
         assert len(fallback["unit_type_assessments"]) == 2
 
         b1 = [a for a in fallback["unit_type_assessments"] if a["unit_type"] == "B1"][0]
-        assert b1["grade"] == "CRITICAL"
-        assert b1["health_score"] < 30
+        # B1 should be CRISIS or DISTRESSED based on revenue efficiency
+        assert b1["grade"] in ("CRISIS", "DISTRESSED")
+        assert b1["health_score"] < 55
+
+    def test_fallback_has_revenue_efficiency_grades(self, db):
+        """Fallback uses pre-computed revenue efficiency grades, not flag counts."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+        from app.services.metrics_engine import compute_property_metrics
+        from app.services.flag_generator import generate_flags
+
+        prop = db.query(Property).filter_by(code="PROP-B").first()
+        config = db.query(ClientConfig).filter_by(property_id=prop.id, is_active=True).first()
+        config_dict = {k: getattr(config, k) or {} for k in [
+            "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
+            "concession_policy", "renewal_policy", "lease_term_policy",
+            "experiment_policy", "amenity_benchmarks", "revenue_efficiency_zones",
+        ]}
+        metrics = compute_property_metrics(db, str(prop.id), config_dict, REF_DATE)
+        all_flags = {code: generate_flags(m, config_dict) for code, m in metrics["unit_type_metrics"].items()}
+
+        fallback = _fallback_diagnosis(metrics, all_flags)
+
+        for a in fallback["unit_type_assessments"]:
+            assert a["grade"] in ("CRISIS", "DISTRESSED", "IMBALANCED", "OPPORTUNITY", "OPTIMIZED")
+            assert "dominant_lever" in a
+            assert a["dominant_lever"] in ("FILL", "REPRICE", "RENEW", "DE_CONCESSION")
+            assert "revenue_gap_monthly" in a
+            assert isinstance(a["revenue_gap_monthly"], (int, float))
+
+    def test_fallback_has_recommended_actions(self, db):
+        """Fallback builds recommended actions from gap components."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+        from app.services.metrics_engine import compute_property_metrics
+        from app.services.flag_generator import generate_flags
+
+        prop = db.query(Property).filter_by(code="PROP-B").first()
+        config = db.query(ClientConfig).filter_by(property_id=prop.id, is_active=True).first()
+        config_dict = {k: getattr(config, k) or {} for k in [
+            "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
+            "concession_policy", "renewal_policy", "lease_term_policy",
+            "experiment_policy", "amenity_benchmarks", "revenue_efficiency_zones",
+        ]}
+        metrics = compute_property_metrics(db, str(prop.id), config_dict, REF_DATE)
+        all_flags = {code: generate_flags(m, config_dict) for code, m in metrics["unit_type_metrics"].items()}
+
+        fallback = _fallback_diagnosis(metrics, all_flags)
+
+        # At least one unit type should have recommended actions
+        all_actions = [a for assess in fallback["unit_type_assessments"] for a in assess["recommended_actions"]]
+        assert len(all_actions) > 0
+
+        # Every action should have the new fields
+        for action in all_actions:
+            assert "lever" in action
+            assert action["lever"] in ("FILL", "REPRICE", "RENEW", "DE_CONCESSION")
+            assert "expected_impact_monthly" in action
+            assert "confidence" in action
+            assert "downside_risk" in action
+
+    def test_fallback_sorted_by_gap(self, db):
+        """Fallback sorts unit types by revenue gap descending."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+        from app.services.metrics_engine import compute_property_metrics
+        from app.services.flag_generator import generate_flags
+
+        prop = db.query(Property).filter_by(code="PROP-B").first()
+        config = db.query(ClientConfig).filter_by(property_id=prop.id, is_active=True).first()
+        config_dict = {k: getattr(config, k) or {} for k in [
+            "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
+            "concession_policy", "renewal_policy", "lease_term_policy",
+            "experiment_policy", "amenity_benchmarks", "revenue_efficiency_zones",
+        ]}
+        metrics = compute_property_metrics(db, str(prop.id), config_dict, REF_DATE)
+        all_flags = {code: generate_flags(m, config_dict) for code, m in metrics["unit_type_metrics"].items()}
+
+        fallback = _fallback_diagnosis(metrics, all_flags)
+        gaps = [a["revenue_gap_monthly"] for a in fallback["unit_type_assessments"]]
+        assert gaps == sorted(gaps, reverse=True)
+
+    def test_fallback_portfolio_score(self, db):
+        """Fallback computes weighted portfolio score from unit type scores."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+        from app.services.metrics_engine import compute_property_metrics
+        from app.services.flag_generator import generate_flags
+
+        prop = db.query(Property).filter_by(code="PROP-B").first()
+        config = db.query(ClientConfig).filter_by(property_id=prop.id, is_active=True).first()
+        config_dict = {k: getattr(config, k) or {} for k in [
+            "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
+            "concession_policy", "renewal_policy", "lease_term_policy",
+            "experiment_policy", "amenity_benchmarks", "revenue_efficiency_zones",
+        ]}
+        metrics = compute_property_metrics(db, str(prop.id), config_dict, REF_DATE)
+        all_flags = {code: generate_flags(m, config_dict) for code, m in metrics["unit_type_metrics"].items()}
+
+        fallback = _fallback_diagnosis(metrics, all_flags)
+        portfolio_score = fallback["portfolio_assessment"]["overall_portfolio_score"]
+        assert 0 <= portfolio_score <= 100
+        # Should have top priorities
+        assert len(fallback["portfolio_assessment"]["top_3_priorities"]) > 0
+
+    def test_fallback_new_action_types(self, db):
+        """Fallback may include new action types from the expanded taxonomy."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+        from app.services.metrics_engine import compute_property_metrics
+        from app.services.flag_generator import generate_flags
+
+        prop = db.query(Property).filter_by(code="PROP-A").first()
+        config = db.query(ClientConfig).filter_by(property_id=prop.id, is_active=True).first()
+        config_dict = {k: getattr(config, k) or {} for k in [
+            "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
+            "concession_policy", "renewal_policy", "lease_term_policy",
+            "experiment_policy", "amenity_benchmarks", "revenue_efficiency_zones",
+        ]}
+        metrics = compute_property_metrics(db, str(prop.id), config_dict, REF_DATE)
+        all_flags = {code: generate_flags(m, config_dict) for code, m in metrics["unit_type_metrics"].items()}
+
+        fallback = _fallback_diagnosis(metrics, all_flags)
+
+        # All action types should be from the taxonomy
+        valid_types = {
+            "REDUCE_ASKING_RENT", "INCREASE_ASKING_RENT", "HOLD_ASKING_RENT",
+            "TEST_HIGHER_ASKING", "TEST_TERM_PREMIUM",
+            "OFFER_MOVE_IN_CONCESSION", "OFFER_LOOK_AND_LEASE", "REMOVE_CONCESSION",
+            "LAUNCH_PRICE_EXPERIMENT", "LAUNCH_CONCESSION_EXPERIMENT", "CONVERGE_EXPERIMENT",
+            "IMPLEMENT_RENEWAL_INCREASE", "SET_RENEWAL_INCREASE", "FREEZE_RENEWAL_INCREASES",
+            "ADJUST_PREFERRED_LEASE_TERM", "OFFER_SHORT_TERM_PREMIUM",
+            "AUDIT_AMENITY_PRICING", "INVESTIGATE_NON_PRICE_FACTORS",
+        }
+        for assess in fallback["unit_type_assessments"]:
+            for action in assess["recommended_actions"]:
+                assert action["action_type"] in valid_types, f"Unknown action type: {action['action_type']}"
