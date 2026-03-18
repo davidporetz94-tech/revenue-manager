@@ -1,16 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoginPage from './auth/LoginPage';
-import PropertyList from './components/dashboard/PropertyList';
-import PropertyDetail from './components/dashboard/PropertyDetail';
+import PortfolioDashboard from './components/dashboard/PortfolioDashboard';
+import PricingReview from './components/dashboard/PricingReview';
 import SlideshowViewer from './components/slideshow/SlideshowViewer';
+import { getProperties } from './api/client';
 
 function AppContent() {
   const { user, loading } = useAuth();
+  const [properties, setProperties] = useState([]);
   const [selectedProperty, setSelectedProperty] = useState(null);
   const [slideDeck, setSlideDeck] = useState(null);
   const [showSlideshow, setShowSlideshow] = useState(false);
+  const [propsLoading, setPropsLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      getProperties()
+        .then(setProperties)
+        .catch(() => {})
+        .finally(() => setPropsLoading(false));
+    }
+  }, [user]);
 
   if (loading) {
     return (
@@ -29,18 +41,18 @@ function AppContent() {
     return (
       <SlideshowViewer
         slideDeck={slideDeck}
-        propertyName={selectedProperty?.name || 'Property'}
-        onExit={() => { setShowSlideshow(false); setSlideDeck(null); }}
+        propertyName={selectedProperty?.name || 'Portfolio'}
+        onExit={() => setShowSlideshow(false)}
       />
     );
   }
 
   if (selectedProperty) {
     return (
-      <PropertyDetail
+      <PricingReview
         property={selectedProperty}
-        onBack={() => setSelectedProperty(null)}
-        onDiagnosticComplete={(deck) => {
+        onBack={() => { setSelectedProperty(null); setSlideDeck(null); }}
+        onShowSlideshow={(deck) => {
           setSlideDeck(deck);
           setShowSlideshow(true);
         }}
@@ -48,14 +60,25 @@ function AppContent() {
     );
   }
 
+  if (propsLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-stone-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-stone-300 border-t-stone-700 rounded-full animate-spin" />
+          <span className="text-sm text-stone-400">Loading portfolio</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <PropertyList
+    <PortfolioDashboard
+      properties={properties}
       onSelectProperty={setSelectedProperty}
-      onDiagnosticComplete={(deck) => {
+      onShowPortfolioSlideshow={(deck) => {
         setSlideDeck(deck);
         setShowSlideshow(true);
       }}
-      selectedProperty={selectedProperty}
     />
   );
 }

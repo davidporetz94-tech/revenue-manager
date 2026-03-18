@@ -132,3 +132,75 @@ def compute_portfolio_metrics(unit_type_metrics: list[dict]) -> dict:
         "worst_performing_unit_type": worst,
         "best_performing_unit_type": best,
     }
+
+
+def aggregate_cross_property(all_property_data: list[dict]) -> dict:
+    """Aggregate metrics and flags across multiple properties.
+
+    Args:
+        all_property_data: list of dicts, each with 'metrics' and 'flags' keys.
+            'metrics' is the output of compute_property_metrics().
+            'flags' is a dict of unit_type_code -> flag list.
+
+    Returns:
+        Dict with 'properties', 'aggregate', and 'all_flags' sections.
+    """
+    properties = {}
+    all_flags = {}
+    total_units = 0
+    total_vacant = 0
+    total_daily_burn = 0.0
+    total_monthly_cost = 0.0
+    total_risk_30d = 0.0
+
+    for entry in all_property_data:
+        m = entry["metrics"]
+        prop_name = m["property_name"]
+        pm = m.get("portfolio_metrics", {})
+
+        properties[prop_name] = {
+            "name": prop_name,
+            "property_id": m.get("property_id"),
+            "unit_type_metrics": m["unit_type_metrics"],
+            "portfolio_metrics": pm,
+        }
+
+        all_flags[prop_name] = entry["flags"]
+
+        total_units += pm.get("total_units", 0)
+        total_vacant += pm.get("total_vacant", 0)
+
+        for ut_m in m["unit_type_metrics"].values():
+            total_daily_burn += ut_m["revenue_metrics"]["daily_vacancy_burn"]
+            total_monthly_cost += ut_m["revenue_metrics"]["monthly_vacancy_cost"]
+            total_risk_30d += ut_m["revenue_metrics"]["revenue_at_risk_30d"]
+
+    total_occupied = total_units - total_vacant
+    blended_occ = total_occupied / total_units if total_units > 0 else 0.0
+
+    # Rank properties by daily burn (worst = highest burn)
+    prop_burns = []
+    for name, pdata in properties.items():
+        burn = sum(
+            ut["revenue_metrics"]["daily_vacancy_burn"]
+            for ut in pdata["unit_type_metrics"].values()
+        )
+        prop_burns.append((name, burn))
+    prop_burns.sort(key=lambda x: x[1], reverse=True)
+
+    return {
+        "properties": properties,
+        "aggregate": {
+            "total_units": total_units,
+            "total_occupied": total_occupied,
+            "total_vacant": total_vacant,
+            "blended_occupancy": blended_occ,
+            "total_daily_burn": total_daily_burn,
+            "total_monthly_cost": total_monthly_cost,
+            "total_revenue_at_risk_30d": total_risk_30d,
+            "property_count": len(properties),
+            "worst_property": prop_burns[0][0] if prop_burns else "",
+            "best_property": prop_burns[-1][0] if prop_burns else "",
+        },
+        "all_flags": all_flags,
+    }

@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -31,6 +32,10 @@ class ConfigSaveRequest(BaseModel):
     risk_profile: str | None = None
     hold_period_years: int | None = None
     business_plan_summary: str | None = None
+
+
+class TemplateApplyRequest(BaseModel):
+    template_id: str
 
 
 @router.get("/properties/{property_id}/config")
@@ -144,6 +149,67 @@ def preview_diagnosis(
             "flags": [{"type": f["type"], "severity": f["severity"]} for f in flags],
         }
     return result
+
+
+@router.get("/config/templates")
+def list_templates():
+    """List available config templates."""
+    from app.services.config_templates import get_templates
+    return get_templates()
+
+
+@router.post("/properties/{property_id}/config/from-template")
+def apply_template(
+    property_id: str,
+    request: TemplateApplyRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Apply a config template to a property."""
+    from app.services.config_templates import get_template_config
+
+    template_config = get_template_config(request.template_id)
+    if not template_config:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    prop = db.query(Property).filter_by(id=property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    # Deactivate current config
+    db.query(ClientConfig).filter_by(
+        property_id=property_id, is_active=True
+    ).update({"is_active": False})
+
+    # Create new config from template
+    new_config = ClientConfig(
+        id=uuid.uuid4(),
+        property_id=property_id,
+        version=(db.query(func.max(ClientConfig.version)).filter_by(property_id=property_id).scalar() or 0) + 1,
+        is_active=True,
+        investment_thesis=f"Applied from template: {request.template_id}",
+        risk_profile="balanced",
+        hold_period_years=5,
+        business_plan_summary=f"Configuration based on {request.template_id} template",
+        created_by=str(user.id),
+        **template_config,
+    )
+    db.add(new_config)
+
+    # Audit log
+    audit = AuditLog(
+        id=uuid.uuid4(),
+        organization_id=user.organization_id,
+        user_id=str(user.id),
+        action="APPLY_TEMPLATE",
+        entity_type="client_config",
+        entity_id=str(new_config.id),
+        details={"template_id": request.template_id, "property_id": property_id},
+    )
+    db.add(audit)
+    db.flush()
+
+    return {"status": "ok", "config_id": str(new_config.id), "version": new_config.version}
 
 
 def _config_response(config: ClientConfig) -> dict:

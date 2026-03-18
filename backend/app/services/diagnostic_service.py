@@ -39,6 +39,24 @@ CRITICAL RULES:
 - Never recommend experiments for unit types with < min_vacant_for_experiment vacant units.
 - Every dollar amount in your response must come from the pre-computed facts provided. Do NOT invent numbers.
 
+SCORING RUBRIC (mandatory — scores outside these ranges are invalid):
+
+- 2+ CRITICAL flags AND occupancy below crisis threshold → score 15-30
+- 1 CRITICAL flag OR 3+ HIGH flags → score 30-50
+- Multiple HIGH + MEDIUM flags, no CRITICAL → score 45-60
+- Mix of MEDIUM flags, possibly 1 HIGH → score 55-70
+- Mostly LOW/POSITIVE flags, minor concerns only → score 70-85
+- All metrics healthy, no flags requiring action → score 85-95
+
+Pick a specific score within the range. Justify with the 2-3 most influential flags.
+Identical inputs must produce scores within ±5 points across runs.
+
+Expected ranges for reference (do NOT hardcode these — derive from the rules above):
+- Unit type with 3 low-severity flags, 96% occ: 75-85
+- Unit type with 7 flags including HIGH, 86% occ declining: 50-65
+- Unit type with 12 flags including 2 CRITICAL, 79% occ: 20-35
+- Unit type with 7 flags, zero CRITICAL, puzzle profile: 55-65
+
 Action taxonomy:
 - Pricing: REDUCE_ASKING_RENT, INCREASE_ASKING_RENT, HOLD_ASKING_RENT
 - Concessions: OFFER_MOVE_IN_CONCESSION, OFFER_LOOK_AND_LEASE, REMOVE_CONCESSION
@@ -191,6 +209,8 @@ def run_diagnostic(
     run = DiagnosticRun(
         id=uuid.uuid4(),
         property_id=property_id,
+        organization_id=organization_id,
+        scope="property",
         config_id=config.id,
         run_date=datetime.utcnow(),
         triggered_by=user_id,
@@ -356,14 +376,19 @@ def _fallback_diagnosis(metrics: dict, all_flags: dict) -> dict:
         critical_count = sum(1 for f in flags if f["severity"] == "CRITICAL")
         high_count = sum(1 for f in flags if f["severity"] == "HIGH")
 
+        # Scoring rubric aligned with Claude prompt ranges
         if critical_count >= 2:
-            score, grade = 25, "CRITICAL"
+            score, grade = 25, "CRITICAL"  # 15-30 range
         elif critical_count >= 1 or high_count >= 3:
-            score, grade = 55, "ACTION_NEEDED"
+            score, grade = 40, "ACTION_NEEDED"  # 30-50 range
         elif high_count >= 1:
-            score, grade = 70, "WATCH"
+            score, grade = 60, "ACTION_NEEDED"  # 45-60 range (multiple HIGH+MEDIUM)
+        elif len(flags) > 3:
+            score, grade = 65, "WATCH"  # 55-70 range (mix of MEDIUM)
+        elif len(flags) > 0:
+            score, grade = 80, "HEALTHY"  # 70-85 range (minor concerns)
         else:
-            score, grade = 85, "HEALTHY"
+            score, grade = 90, "HEALTHY"  # 85-95 range (all healthy)
 
         occ = m["occupancy_metrics"]["occupancy_rate"]
         exp = m["exposure_metrics"]["total_exposure_pct"]

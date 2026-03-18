@@ -15,6 +15,19 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// 401 interceptor — clear auth and redirect to login on token expiry
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.reload();
+    }
+    return Promise.reject(error);
+  }
+);
+
 export async function login(email, password) {
   const res = await api.post('/auth/login', { email, password });
   return res.data;
@@ -97,6 +110,39 @@ export async function cancelExperiment(experimentId) {
 
 export async function getAuditLog() {
   const res = await api.get('/audit');
+  return res.data;
+}
+
+export async function getPropertySummary(propertyId) {
+  const res = await api.get(`/properties/${propertyId}/summary`);
+  return res.data;
+}
+
+export async function getConfigTemplates() {
+  const res = await api.get('/config/templates');
+  return res.data;
+}
+
+export async function applyTemplate(propertyId, templateId) {
+  const res = await api.post(`/properties/${propertyId}/config/from-template`, { template_id: templateId });
+  return res.data;
+}
+
+export async function chatWithAI(propertyId, message, latestRunId) {
+  const res = await api.post(`/properties/${propertyId}/chat`, {
+    message,
+    latest_run_id: latestRunId || null,
+  });
+  return res.data;
+}
+
+export async function runPortfolioDiagnostic() {
+  const res = await api.post('/diagnostic/portfolio/run');
+  return res.data;
+}
+
+export async function getPortfolioDiagnosticHistory() {
+  const res = await api.get('/diagnostic/portfolio/history');
   return res.data;
 }
 

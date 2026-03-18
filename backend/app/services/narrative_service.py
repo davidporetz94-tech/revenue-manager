@@ -24,6 +24,20 @@ STYLE RULES:
 - Max 4 sentences per narrative block.
 - Max 25 words per bullet point.
 
+TONE RULES (mandatory):
+- NEVER use: "It appears that...", "You may want to consider...", "This could potentially..."
+- ALWAYS use direct statements: "B1 is overpriced by $91 against every comp."
+- ALWAYS use direct recommendations: "Cut B1 asking rent to $1,475 immediately."
+- ALWAYS include dollar amounts and revenue impact in every observation.
+- ALWAYS use active voice: "Reduce asking rent by $50" not "Prices should be adjusted"
+- Address the client directly: "Your B1 units..." not "The B1 units..."
+
+ARCHETYPE GUIDANCE (use the metrics to determine which pattern applies):
+- HIGH OCC (≥95%) + aligned with comps: Emphasize pricing power. "You have room to push."
+- DECLINING OCC + rising asking: Emphasize the trajectory. "Occupancy has dropped X points per month for N months while asking rent increased. The market is telling you something."
+- CRISIS (≥2 CRITICAL flags): Emphasize urgency with daily burn. "Every day of delay costs $X."
+- PUZZLE (priced at comps but not leasing): Frame as investigation. "The price is right — comps confirm it. So why are N units sitting for X days? This needs investigation, not a price cut."
+
 Output ONLY valid JSON with this schema:
 {
   "slide_2_headline": "string (max 20 words, clear verdict)",
@@ -44,6 +58,14 @@ STYLE RULES:
 - Explain WHY each action is recommended, not just WHAT
 - Plain text only — NO markdown formatting
 - Max 4 sentences per narrative block
+
+TONE RULES (mandatory):
+- NEVER use: "It appears that...", "You may want to consider...", "This could potentially..."
+- ALWAYS use direct language: "Cut B1 to $1,475 on Day 1" not "Consider adjusting pricing"
+- ALWAYS include dollar amounts from the pre-computed facts
+- ALWAYS use active voice and imperative mood for actions
+- Frame experiments as business decisions: "Test $1,358 vs control $1,411 on your 5 vacant A2 units"
+- Frame decision points in plain language: "If 2 of 3 test units lease faster, lock the lower price"
 
 Output ONLY valid JSON with this schema:
 {
@@ -233,8 +255,19 @@ def _generate_fallback_narratives(diagnosis: dict, action_plan: dict, metrics: d
             )
         narratives[slide_key] = " ".join(parts)
 
-    # Trend
-    narratives["slide_6_narrative"] = "Review the 4-month trend data to identify occupancy and pricing trajectories for each unit type."
+    # Trend — build dynamically from occupancy rates
+    occ_parts = []
+    for code, m in ut_metrics.items():
+        occ = m["occupancy_metrics"]["occupancy_rate"]
+        occ_parts.append(f"{code} at {occ:.0%}")
+    occ_summary = ", ".join(occ_parts[:-1]) + f", and {occ_parts[-1]}" if len(occ_parts) > 1 else occ_parts[0] if occ_parts else ""
+    # Find the worst drop
+    worst_code = min(ut_metrics, key=lambda c: ut_metrics[c]["occupancy_metrics"]["occupancy_rate"]) if ut_metrics else ""
+    worst_occ = ut_metrics[worst_code]["occupancy_metrics"]["occupancy_rate"] if worst_code else 0
+    narratives["slide_6_narrative"] = (
+        f"Your occupancy trend tells a clear story: {occ_summary}. "
+        f"When occupancy falls as low as {worst_occ:.0%} on {worst_code} while asking rent stays flat, the market is sending a clear signal."
+    )
 
     # Revenue at risk
     total_daily = sum(m["revenue_metrics"]["daily_vacancy_burn"] for m in ut_metrics.values())
@@ -244,12 +277,25 @@ def _generate_fallback_narratives(diagnosis: dict, action_plan: dict, metrics: d
     )
 
     # Action plan slides
-    narratives["slide_8_narrative"] = "The 30-day action plan is structured in 4 phases with a Day 15 decision point to evaluate results and adjust strategy."
-    narratives["slide_9_narrative"] = "Phase 1 focuses on immediate stabilization actions for the most critical unit types."
-    narratives["slide_10_narrative"] = "At Day 15, evaluate experiment results and occupancy trends to determine next steps for each unit type."
+    narratives["slide_8_narrative"] = (
+        f"This plan targets your ${total_daily:,.0f}/day portfolio burn with phased actions "
+        f"— immediate price cuts where confidence is high, controlled experiments where it's not, "
+        f"and a Day 15 decision point to lock winners."
+    )
+    narratives["slide_9_narrative"] = (
+        "Day 1: Cut asking rent on your worst-performing units and launch experiments on candidates "
+        "with enough vacancy to test. Every day of delay on critical actions costs real money."
+    )
+    narratives["slide_10_narrative"] = (
+        "Day 15 is your decision point. If test units leased faster at the lower price, lock it in "
+        "across the board. If not, investigate non-price factors before cutting further."
+    )
 
     # Investigation
-    narratives["slide_11_narrative"] = "Several areas require further investigation to confirm root causes and optimize the action plan."
+    narratives["slide_11_narrative"] = (
+        "Not every vacancy problem is a pricing problem. Units priced at comps that still aren't leasing "
+        "need investigation — unit condition, listing photos, tour conversion, and amenity competitiveness."
+    )
     narratives["slide_12_summary"] = (
         f"Your portfolio requires immediate attention on {total_vacant} vacant units. "
         f"The 30-day plan targets a ${int(total_monthly * 0.3):,.0f} monthly savings through pricing adjustments and experiments."

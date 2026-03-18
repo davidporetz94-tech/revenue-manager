@@ -27,6 +27,91 @@ Each entry follows this structure:
 
 ## Log Entries
 
+### [2026-03-18 15:30] — Portfolio-Wide Diagnostic COMPLETE
+**Phase:** Feature Extension
+**What was done:**
+- Added portfolio-wide diagnostic pipeline (metrics aggregation → Claude diagnosis → 15-slide slideshow)
+- Database migration: added organization_id, scope columns to diagnostic_runs; made property_id nullable
+- New engine function: aggregate_cross_property() in aggregator.py (pure computation, no DB access)
+- New services: portfolio_diagnostic_service.py, portfolio_viz_data_service.py, portfolio_narrative_service.py, portfolio_slide_deck_service.py
+- New API endpoints: POST /diagnostic/portfolio/run, GET /diagnostic/portfolio/history
+- Updated existing endpoints for scope-awareness (nullable property_id, portfolio slide deck routing)
+- Frontend: 4 new slide components (PortfolioTitle, PropertyComparison, PropertyRanking, PortfolioTrend)
+- Frontend: "Run Portfolio Diagnosis" button on PortfolioDashboard hero KPI bar
+- Frontend: SlideshowViewer updated with portfolio slide type mappings
+- E2E verified: 15 slides generated (6 portfolio + 4 property deep dives + 5 action/summary)
+**Files created:**
+- backend/alembic/versions/a43e41e547e9_add_portfolio_diagnostic_support.py
+- backend/app/services/portfolio_diagnostic_service.py
+- backend/app/services/portfolio_viz_data_service.py
+- backend/app/services/portfolio_narrative_service.py
+- backend/app/services/portfolio_slide_deck_service.py
+- frontend/src/components/slideshow/slides/{PortfolioTitleSlide,PropertyComparisonSlide,PropertyRankingSlide,PortfolioTrendSlide}.jsx
+- docs/superpowers/specs/2026-03-18-portfolio-diagnostic-design.md
+- docs/superpowers/plans/2026-03-18-portfolio-diagnostic.md
+**Files modified:**
+- backend/app/engine/aggregator.py (aggregate_cross_property)
+- backend/app/models/diagnostic.py (organization_id, scope, nullable property_id)
+- backend/app/schemas/diagnostic.py (optional property_id, scope field)
+- backend/app/api/diagnostic.py (portfolio endpoints, scope-aware slides)
+- backend/app/services/diagnostic_service.py (set organization_id on runs)
+- frontend/src/api/client.js (runPortfolioDiagnostic, getPortfolioDiagnosticHistory)
+- frontend/src/components/slideshow/SlideshowViewer.jsx (portfolio slide mappings)
+- frontend/src/components/dashboard/PortfolioDashboard.jsx (portfolio diagnostic button)
+- frontend/src/App.jsx (portfolio slideshow wiring)
+**Tests run:**
+- `pytest tests/` → 203 passed, 0 failed
+- `npx react-scripts build` → compiled successfully
+- E2E: portfolio diagnostic → 15 slides, per-property still works
+**Blockers/Issues:**
+- None
+**Next step:**
+- Ready for demo
+
+---
+
+### [2026-03-18 10:30] — RoboRev Polish ALL STEPS COMPLETE (1A-11)
+**Phase:** Polish, Harden, and Extend
+**What was done:**
+- Step 1A: Added deterministic scoring rubric to DIAGNOSIS_SYSTEM_PROMPT with flag-based score bands (15-30 for 2+ CRITICAL, 30-50 for 1 CRITICAL, etc.). Aligned _fallback_diagnosis() to same rubric.
+- Step 1B: Fixed competitive landscape table — split "RealPage (Yardi)" into separate RealPage (YieldStar/AIRM) and Yardi (Revenue IQ) rows in ROBOREV-ROADMAP.md and ROBOREV-BUILD-CONTEXT.md
+- Step 1C: Updated narrative prompts with tone rules (no hedging, direct address, dollar amounts required) and archetype guidance (CRISIS, PUZZLE, HEALTHY, DECLINING). Updated fallback narratives with consulting tone.
+- Step 4: Added GET /properties/{id}/summary endpoint reusing compute_property_metrics(). Enhanced GET /properties to include per-property KPIs (vacant, occ, daily_burn). Removed all hardcoded data from frontend.
+- Step 5: Made daily burn the hero KPI (4x size, pulsing dot). Added property card health indicators with "Needs attention" badge. Added CTA guidance text.
+- Step 6: Implemented progressive loading — metrics shown immediately from summary data, flags shown from flagPreview, AI diagnosis fades in when ready. Progress stepper shows computation stages.
+- Step 7: Added health badges (CRITICAL/ACTION NEEDED/WATCH/HEALTHY) to flag cards and unit type cards. Color-coded left borders on property and unit type cards.
+- Step 8: Added 401 response interceptor to axios client — clears localStorage and redirects to login on JWT expiry.
+- Step 9: Created config templates library (4 templates: Stabilized Balanced, Value-Add Aggressive, Lease-Up, Affordable/Rent-Controlled). Backend: config_templates.py + 2 endpoints (GET /config/templates, POST /config/from-template). Frontend: TemplatePicker.jsx integrated into ConfigEditor.
+- Step 10: Created AI chat interface. Backend: POST /properties/{id}/chat endpoint using ClaudeClient with metrics+flags context. Frontend: ChatPanel.jsx with starter questions, message history, collapsible side panel. Integrated into PricingReview header.
+- Step 11: Full verification — 203 backend tests pass, frontend builds clean.
+**Files created:**
+- backend/app/services/config_templates.py (4 template definitions)
+- backend/app/api/chat.py (chat endpoint with metrics context)
+- frontend/src/components/config/TemplatePicker.jsx (template picker UI)
+- frontend/src/components/chat/ChatPanel.jsx (chat side panel)
+**Files modified:**
+- backend/app/services/diagnostic_service.py (scoring rubric + fallback alignment)
+- backend/app/services/narrative_service.py (tone rules, archetype guidance, fallback improvements)
+- backend/app/api/properties.py (summary endpoint + enhanced list)
+- backend/app/api/config.py (template endpoints)
+- backend/app/main.py (chat router registration)
+- frontend/src/api/client.js (6 new functions + 401 interceptor)
+- frontend/src/components/dashboard/PortfolioDashboard.jsx (API data, hero KPI, health indicators)
+- frontend/src/components/dashboard/PricingReview.jsx (API data, progressive loading, health badges, chat toggle)
+- frontend/src/components/config/ConfigEditor.jsx (TemplatePicker integration)
+- ROBOREV-ROADMAP.md, ROBOREV-BUILD-CONTEXT.md (competitive landscape fix)
+- decisions.md (DEC-010 through DEC-012)
+- progress.md (this entry)
+**Tests run:**
+- `pytest tests/` → 203 passed, 0 failed
+- `npx react-scripts build` → compiled successfully
+**Blockers/Issues:**
+- None
+**Next step:**
+- Ready for evaluator walkthrough and demo
+
+---
+
 ### [2026-03-17 22:00] — Phase 6 COMPLETE — Integration & Polish
 **Phase:** Integration
 **What was done:**

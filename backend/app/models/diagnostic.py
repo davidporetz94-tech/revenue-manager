@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Integer, ForeignKey, JSON, Index
+from sqlalchemy import String, Integer, ForeignKey, JSON, Index, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -9,9 +9,15 @@ from app.database import Base
 
 class DiagnosticRun(Base):
     __tablename__ = "diagnostic_runs"
+    __table_args__ = (
+        CheckConstraint("scope IN ('property', 'portfolio')", name="ck_diagnostic_runs_scope"),
+        Index("ix_diagnostic_runs_portfolio", "organization_id", "scope", "run_date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    property_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("properties.id"), nullable=False)
+    property_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("properties.id"), nullable=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, server_default="property")
     config_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("client_configs.id"), nullable=True)
     run_date: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     triggered_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)

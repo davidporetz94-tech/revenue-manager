@@ -9,6 +9,7 @@ from app.api.comps import router as comps_router
 from app.api.experiments import router as experiments_router
 from app.api.snapshots import router as snapshots_router
 from app.api.audit import router as audit_router
+from app.api.chat import router as chat_router
 
 app = FastAPI(
     title="Multifamily Revenue Management Platform",
@@ -18,7 +19,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,6 +33,7 @@ app.include_router(comps_router)
 app.include_router(experiments_router)
 app.include_router(snapshots_router)
 app.include_router(audit_router)
+app.include_router(chat_router)
 
 
 @app.get("/health")

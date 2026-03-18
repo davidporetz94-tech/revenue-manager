@@ -7,7 +7,8 @@ from pydantic import BaseModel
 
 class DiagnosticRunResponse(BaseModel):
     id: str
-    property_id: str
+    property_id: str | None = None
+    scope: str = "property"
     status: str
     run_date: datetime | None = None
     metrics_json: dict | None = None
@@ -30,6 +31,8 @@ class DiagnosticRunCreate(BaseModel):
 
 class DiagnosticRunSummary(BaseModel):
     id: str
+    property_id: str | None = None
+    scope: str = "property"
     status: str
     run_date: datetime | None = None
     total_ms: int | None = None

@@ -124,9 +124,48 @@ These decisions were made during planning and are FINAL. They are logged here fo
 **Impact:** Specific installed versions may differ slightly from bootstrap spec but all APIs remain compatible.
 **Reversible:** Yes — can pin exact versions if issues arise
 
+### DEC-010 — Deterministic Scoring Rubric in Claude Prompt
+**Date:** 2026-03-18
+**Phase:** Polish (Step 1A)
+**Context:** Same inputs to Claude produced different health scores across runs, undermining evaluator confidence.
+**Options considered:**
+1. Hardcode scores in fallback only
+2. Add rubric to Claude prompt with expected ranges
+3. Remove Claude scoring entirely and compute deterministically
+**Decision:** Option 2 — Add rubric to prompt with flag-count-based score bands
+**Rationale:** Keeps Claude's judgment for nuanced scoring while constraining the range. ±5 point tolerance is acceptable. Fully deterministic scoring (option 3) would remove Claude's ability to weigh flag severity context.
+**Impact:** Scores now stay within ±5 across runs. Fallback scoring also aligned to same rubric.
+**Reversible:** Yes — rubric can be tuned
+
+### DEC-011 — Server-Side Property Summary Endpoint
+**Date:** 2026-03-18
+**Phase:** Polish (Step 4)
+**Context:** Frontend used hardcoded UNIT_TYPE_DATA and SNAPSHOT_TRENDS. Needed real API data for evaluator credibility.
+**Options considered:**
+1. Have frontend call metrics_engine directly (impossible — Python backend)
+2. Add GET /properties/{id}/summary that reuses compute_property_metrics()
+3. Embed metrics in the GET /properties response
+**Decision:** Option 2 for detail + enhanced option 3 for dashboard KPIs
+**Rationale:** Summary endpoint returns full unit type metrics + trends. Enhanced /properties includes per-property KPIs (vacant, occ, burn) to avoid N+1 calls from the dashboard.
+**Impact:** Frontend now shows real data from the engine. Hardcoded constants removed from both PortfolioDashboard and PricingReview.
+**Reversible:** Yes — additive change
+
+### DEC-012 — Progressive Loading via Frontend Phasing
+**Date:** 2026-03-18
+**Phase:** Polish (Step 6)
+**Context:** 12-15 seconds blank screen during Claude processing was poor UX.
+**Options considered:**
+1. Backend streaming/SSE for partial results
+2. Frontend-only phasing using already-loaded data
+3. WebSocket progress updates
+**Decision:** Option 2 — Frontend phases metrics (immediate) → flags (immediate) → AI diagnosis (when ready)
+**Rationale:** Summary data and flagPreview are already loaded when user navigates to property. Zero additional API calls. AI layer just adds on top. Simplest approach with best UX impact.
+**Impact:** Evaluator sees metrics and flags within 1 second of clicking "Get AI Review". AI diagnosis fades in when ready.
+**Reversible:** Yes — can add streaming later
+
 <!--
 INSTRUCTIONS:
-- Number sequentially from DEC-010 onward
+- Number sequentially from DEC-013 onward
 - Log BEFORE implementing
 - Every decision gets all fields
 - "I just went with X" is NOT a valid entry — explain WHY

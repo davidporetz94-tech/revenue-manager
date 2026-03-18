@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getConfig, saveConfig, previewDiagnosis } from '../../api/client';
+import TemplatePicker from './TemplatePicker';
 
 const SECTIONS = [
   { key: 'occupancy_thresholds', label: 'Occupancy Thresholds', fields: [
@@ -86,6 +87,7 @@ export default function ConfigEditor({ propertyId }) {
 
   return (
     <div>
+      <TemplatePicker propertyId={propertyId} onTemplateApplied={loadConfig} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="font-display text-xl text-stone-900">Configuration</h2>

@@ -11,6 +11,10 @@ import PhaseDetailSlide from './slides/PhaseDetailSlide';
 import DecisionTreeSlide from './slides/DecisionTreeSlide';
 import InvestigationSlide from './slides/InvestigationSlide';
 import SummarySlide from './slides/SummarySlide';
+import PortfolioTitleSlide from './slides/PortfolioTitleSlide';
+import PropertyComparisonSlide from './slides/PropertyComparisonSlide';
+import PropertyRankingSlide from './slides/PropertyRankingSlide';
+import PortfolioTrendSlide from './slides/PortfolioTrendSlide';
 
 const SLIDE_COMPONENTS = {
   TITLE: TitleSlide,
@@ -24,6 +28,17 @@ const SLIDE_COMPONENTS = {
   DECISION_TREE: DecisionTreeSlide,
   INVESTIGATION: InvestigationSlide,
   SUMMARY: SummarySlide,
+  PORTFOLIO_TITLE: PortfolioTitleSlide,
+  PORTFOLIO_EXECUTIVE_SUMMARY: ExecutiveSummarySlide,
+  PORTFOLIO_SNAPSHOT: PropertyComparisonSlide,
+  PROPERTY_RANKING: PropertyRankingSlide,
+  PORTFOLIO_TRENDS: PortfolioTrendSlide,
+  PORTFOLIO_REVENUE_AT_RISK: RevenueAtRiskSlide,
+  PORTFOLIO_ACTION_PLAN: ActionPlanOverviewSlide,
+  PORTFOLIO_PHASE_DETAIL: PhaseDetailSlide,
+  PORTFOLIO_DECISION_POINT: DecisionTreeSlide,
+  PORTFOLIO_INVESTIGATION: InvestigationSlide,
+  PORTFOLIO_SUMMARY: SummarySlide,
 };
 
 export default function SlideshowViewer({ slideDeck, propertyName, onExit }) {
