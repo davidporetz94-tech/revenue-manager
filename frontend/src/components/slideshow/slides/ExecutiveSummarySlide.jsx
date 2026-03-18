@@ -1,6 +1,7 @@
 import React from 'react';
 import ScoreGauge from '../charts/ScoreGauge';
 import KPICards from '../charts/KPICards';
+import DimensionBreakdownChart from '../charts/DimensionBreakdownChart';
 
 export default function ExecutiveSummarySlide({ slide }) {
   const viz = slide.viz_data || {};
@@ -9,8 +10,13 @@ export default function ExecutiveSummarySlide({ slide }) {
   return (
     <div className="h-full flex flex-col gap-4 p-2">
       <div className="flex flex-col lg:flex-row gap-6 items-start">
-        <div className="lg:w-1/3 flex justify-center">
+        <div className="lg:w-1/3 flex flex-col items-center gap-3">
           <ScoreGauge data={viz.score_gauge} />
+          {viz.dimension_breakdown && (
+            <div className="w-full">
+              <DimensionBreakdownChart data={viz.dimension_breakdown} />
+            </div>
+          )}
         </div>
         <div className="lg:w-2/3">
           <p className="text-lg font-semibold text-gray-800 mb-3">

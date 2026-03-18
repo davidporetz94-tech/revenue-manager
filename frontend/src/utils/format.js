@@ -11,10 +11,17 @@ export function formatPercent(value) {
 
 export function gradeColor(grade) {
   const colors = {
+    // Legacy 4-zone
     CRITICAL: '#DC2626',
     ACTION_NEEDED: '#D97706',
     WATCH: '#F59E0B',
     HEALTHY: '#059669',
+    // New 5-zone
+    CRISIS: '#DC2626',
+    DISTRESSED: '#EA580C',
+    IMBALANCED: '#D97706',
+    OPPORTUNITY: '#0D9488',
+    OPTIMIZED: '#059669',
   };
   return colors[grade] || '#6B7280';
 }

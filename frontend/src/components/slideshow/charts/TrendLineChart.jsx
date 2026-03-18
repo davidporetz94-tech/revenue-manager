@@ -37,6 +37,9 @@ export default function TrendLineChart({ data }) {
               <Line yAxisId="left" type="monotone" dataKey="occupancy" stroke="#059669" strokeWidth={2} dot={{ r: 3 }} />
               <Line yAxisId="right" type="monotone" dataKey="asking" stroke="#7C3AED" strokeWidth={2} dot={{ r: 3 }} />
               <Line yAxisId="right" type="monotone" dataKey="comps" stroke="#2563EB" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
+              {ut.series?.some(s => s.optimal != null) && (
+                <Line yAxisId="right" type="monotone" dataKey="optimal" stroke="#059669" strokeWidth={2} dot={{ r: 2 }} strokeDasharray="3 3" name="optimal" />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

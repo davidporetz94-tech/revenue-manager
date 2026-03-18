@@ -1,10 +1,36 @@
 import React from 'react';
 
+// 5-zone labels and colors for revenue optimization scoring
+const ZONE_LABELS = {
+  CRITICAL: 'CRISIS',
+  ACTION_NEEDED: 'DISTRESSED',
+  WATCH: 'IMBALANCED',
+  HEALTHY: 'OPTIMIZED',
+  // New 5-zone system
+  CRISIS: 'CRISIS',
+  DISTRESSED: 'DISTRESSED',
+  IMBALANCED: 'IMBALANCED',
+  OPPORTUNITY: 'OPPORTUNITY',
+  OPTIMIZED: 'OPTIMIZED',
+};
+
+const ZONE_COLORS = {
+  CRISIS: '#DC2626',
+  DISTRESSED: '#EA580C',
+  IMBALANCED: '#D97706',
+  OPPORTUNITY: '#0D9488',
+  OPTIMIZED: '#059669',
+  // Legacy fallbacks
+  CRITICAL: '#DC2626',
+  ACTION_NEEDED: '#EA580C',
+  WATCH: '#D97706',
+  HEALTHY: '#059669',
+};
+
 export default function ScoreGauge({ data }) {
   if (!data) return null;
   const { score, max, zones } = data;
   const pct = Math.min(score / max, 1);
-  const angle = -90 + pct * 180; // -90 to 90 degrees
 
   const r = 80;
   const cx = 100;
@@ -26,17 +52,23 @@ export default function ScoreGauge({ data }) {
   const nx = cx + needleLen * Math.cos((needleAngle * Math.PI) / 180);
   const ny = cy + needleLen * Math.sin((needleAngle * Math.PI) / 180);
 
-  const currentZone = zones.find(z => score >= z.min && score <= z.max);
+  const currentZone = zones?.find(z => score >= z.min && score <= z.max);
+  const zoneLabel = currentZone
+    ? (ZONE_LABELS[currentZone.label] || currentZone.label)
+    : null;
+  const zoneColor = currentZone
+    ? (ZONE_COLORS[currentZone.label] || currentZone.color || '#6B7280')
+    : '#6B7280';
 
   return (
     <div className="flex flex-col items-center">
       <svg viewBox="0 0 200 120" className="w-48 h-auto">
-        {zones.map((zone, i) => (
+        {zones?.map((zone, i) => (
           <path
             key={i}
             d={arcPath(zone.min / max, zone.max / max)}
             fill="none"
-            stroke={zone.color}
+            stroke={ZONE_COLORS[zone.label] || zone.color}
             strokeWidth="12"
             strokeLinecap="round"
             opacity={0.3}
@@ -46,7 +78,7 @@ export default function ScoreGauge({ data }) {
           <path
             d={arcPath(currentZone.min / max, Math.min(score, currentZone.max) / max)}
             fill="none"
-            stroke={currentZone.color}
+            stroke={zoneColor}
             strokeWidth="12"
             strokeLinecap="round"
           />
@@ -61,14 +93,14 @@ export default function ScoreGauge({ data }) {
         <circle cx={cx} cy={cy} r="4" fill="#111827" />
       </svg>
       <div className="text-center -mt-2">
-        <span className="text-3xl font-bold" style={{ color: currentZone?.color || '#6B7280' }}>
+        <span className="text-3xl font-bold" style={{ color: zoneColor }}>
           {score}
         </span>
         <span className="text-sm text-gray-500 ml-1">/ {max}</span>
       </div>
-      {currentZone && (
-        <span className="text-sm font-medium mt-1" style={{ color: currentZone.color }}>
-          {currentZone.label}
+      {zoneLabel && (
+        <span className="text-sm font-medium mt-1" style={{ color: zoneColor }}>
+          {zoneLabel}
         </span>
       )}
     </div>

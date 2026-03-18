@@ -1,5 +1,5 @@
 import React from 'react';
-import VacancyCostBar from '../charts/VacancyCostBar';
+import RevenueGapWaterfall from '../charts/RevenueGapWaterfall';
 import { formatDollar } from '../../../utils/format';
 
 export default function RevenueAtRiskSlide({ slide }) {
@@ -28,8 +28,8 @@ export default function RevenueAtRiskSlide({ slide }) {
       </div>
 
       <div className="flex-1 bg-white rounded-lg shadow-sm p-4">
-        <h4 className="text-sm font-medium text-gray-500 mb-2">Vacancy Cost by Unit Type</h4>
-        <VacancyCostBar data={viz.stacked_bar} />
+        <h4 className="text-sm font-medium text-gray-500 mb-2">Revenue Gap Decomposition</h4>
+        <RevenueGapWaterfall data={viz.revenue_gap_waterfall} />
       </div>
 
       {narrative.analysis && (

@@ -11,11 +11,14 @@ export default function RentWaterfall({ data, unitType }) {
   const spread = askingItem && compsItem ? askingItem.value - compsItem.value : 0;
   const spreadPct = compsItem?.value > 0 ? ((spread / compsItem.value) * 100).toFixed(1) : '0.0';
 
-  const chartData = data.map(item => ({
-    name: item.label.replace(/^\+ /, '').replace(/^= /, ''),
-    value: item.value,
-    fill: item.color,
-  }));
+  const chartData = data.map(item => {
+    const isOptimal = item.type === 'optimal' || item.label === 'Optimal';
+    return {
+      name: item.label.replace(/^\+ /, '').replace(/^= /, ''),
+      value: item.value,
+      fill: isOptimal ? '#7C3AED' : item.color,
+    };
+  });
 
   return (
     <div>
