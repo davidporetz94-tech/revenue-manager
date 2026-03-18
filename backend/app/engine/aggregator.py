@@ -134,73 +134,121 @@ def compute_portfolio_metrics(unit_type_metrics: list[dict]) -> dict:
     }
 
 
-def aggregate_cross_property(all_property_data: list[dict]) -> dict:
-    """Aggregate metrics and flags across multiple properties.
+def aggregate_cross_property(
+    property_metrics: dict[str, dict],
+) -> dict:
+    """Aggregate metrics across multiple properties for portfolio-level reporting.
 
     Args:
-        all_property_data: list of dicts, each with 'metrics' and 'flags' keys.
-            'metrics' is the output of compute_property_metrics().
-            'flags' is a dict of unit_type_code -> flag list.
+        property_metrics: dict mapping property name/code to its
+            compute_property_metrics() output.
 
     Returns:
-        Dict with 'properties', 'aggregate', and 'all_flags' sections.
+        Dict with 'properties' detail, 'aggregate' totals, and 'property_ranking'.
     """
     properties = {}
-    all_flags = {}
+    total_revenue_gap = 0.0
+    total_optimal_revenue = 0.0
+    total_current_revenue = 0.0
+    total_renewal_opportunity = 0.0
     total_units = 0
     total_vacant = 0
-    total_daily_burn = 0.0
-    total_monthly_cost = 0.0
-    total_risk_30d = 0.0
+    total_vacancy_cost = 0.0
 
-    for entry in all_property_data:
-        m = entry["metrics"]
-        prop_name = m["property_name"]
-        pm = m.get("portfolio_metrics", {})
+    for prop_key, prop_data in property_metrics.items():
+        ut_metrics = prop_data.get("unit_type_metrics", {})
+        pm = prop_data.get("portfolio_metrics", {})
 
-        properties[prop_name] = {
-            "name": prop_name,
-            "property_id": m.get("property_id"),
-            "unit_type_metrics": m["unit_type_metrics"],
+        prop_units = pm.get("total_units", 0)
+        prop_vacant = pm.get("total_vacant", 0)
+        prop_vacancy_cost = pm.get("total_monthly_vacancy_cost", 0)
+
+        total_units += prop_units
+        total_vacant += prop_vacant
+        total_vacancy_cost += prop_vacancy_cost
+
+        # Aggregate revenue fields from each unit type
+        prop_gap = 0.0
+        prop_optimal = 0.0
+        prop_current = 0.0
+        prop_renewal = 0.0
+
+        for _code, m in ut_metrics.items():
+            gap = m.get("revenue_gap", {})
+            prop_gap += gap.get("total_gap_monthly", 0)
+
+            opt = m.get("optimal_pricing", {})
+            prop_optimal += opt.get("optimal_revenue_monthly", 0)
+            prop_current += opt.get("current_revenue_monthly", 0)
+
+            renewal = m.get("renewal_opportunity", {})
+            prop_renewal += renewal.get("net_annual_capture", 0)
+
+        # Per-property revenue efficiency
+        prop_rev_efficiency = (
+            round_half_up(safe_divide(prop_current, prop_optimal) * 100, 1)
+            if prop_optimal > 0 else 0.0
+        )
+
+        total_revenue_gap += prop_gap
+        total_optimal_revenue += prop_optimal
+        total_current_revenue += prop_current
+        total_renewal_opportunity += prop_renewal
+
+        properties[prop_key] = {
+            "property_name": prop_data.get("property_name", prop_key),
+            "property_id": prop_data.get("property_id", ""),
+            "total_units": prop_units,
+            "total_vacant": prop_vacant,
+            "total_monthly_vacancy_cost": prop_vacancy_cost,
+            "revenue_gap": prop_gap,
+            "revenue_efficiency": prop_rev_efficiency,
+            "renewal_opportunity": prop_renewal,
+            "unit_type_metrics": ut_metrics,
             "portfolio_metrics": pm,
         }
 
-        all_flags[prop_name] = entry["flags"]
+    # Portfolio-level aggregate
+    portfolio_rev_efficiency = (
+        round_half_up(safe_divide(total_current_revenue, total_optimal_revenue) * 100, 1)
+        if total_optimal_revenue > 0 else 0.0
+    )
 
-        total_units += pm.get("total_units", 0)
-        total_vacant += pm.get("total_vacant", 0)
+    blended_occ = round_half_up(
+        safe_divide(total_units - total_vacant, total_units), 4,
+    )
 
-        for ut_m in m["unit_type_metrics"].values():
-            total_daily_burn += ut_m["revenue_metrics"]["daily_vacancy_burn"]
-            total_monthly_cost += ut_m["revenue_metrics"]["monthly_vacancy_cost"]
-            total_risk_30d += ut_m["revenue_metrics"]["revenue_at_risk_30d"]
+    aggregate = {
+        "total_units": total_units,
+        "total_vacant": total_vacant,
+        "blended_occupancy": blended_occ,
+        "total_monthly_vacancy_cost": total_vacancy_cost,
+        "total_revenue_gap": total_revenue_gap,
+        "total_optimal_revenue": total_optimal_revenue,
+        "total_current_revenue": total_current_revenue,
+        "portfolio_revenue_efficiency": portfolio_rev_efficiency,
+        "total_renewal_opportunity": total_renewal_opportunity,
+    }
 
-    total_occupied = total_units - total_vacant
-    blended_occ = total_occupied / total_units if total_units > 0 else 0.0
-
-    # Rank properties by daily burn (worst = highest burn)
-    prop_burns = []
-    for name, pdata in properties.items():
-        burn = sum(
-            ut["revenue_metrics"]["daily_vacancy_burn"]
-            for ut in pdata["unit_type_metrics"].values()
-        )
-        prop_burns.append((name, burn))
-    prop_burns.sort(key=lambda x: x[1], reverse=True)
+    # Property ranking: by revenue efficiency ascending (worst first)
+    property_ranking = sorted(
+        [
+            {
+                "property_key": pk,
+                "property_name": pv["property_name"],
+                "revenue_efficiency": pv["revenue_efficiency"],
+                "revenue_gap": pv["revenue_gap"],
+                "total_vacant": pv["total_vacant"],
+                "total_units": pv["total_units"],
+                "vacancy_cost": pv["total_monthly_vacancy_cost"],
+            }
+            for pk, pv in properties.items()
+        ],
+        key=lambda x: x["revenue_efficiency"],
+    )
 
     return {
         "properties": properties,
-        "aggregate": {
-            "total_units": total_units,
-            "total_occupied": total_occupied,
-            "total_vacant": total_vacant,
-            "blended_occupancy": blended_occ,
-            "total_daily_burn": total_daily_burn,
-            "total_monthly_cost": total_monthly_cost,
-            "total_revenue_at_risk_30d": total_risk_30d,
-            "property_count": len(properties),
-            "worst_property": prop_burns[0][0] if prop_burns else "",
-            "best_property": prop_burns[-1][0] if prop_burns else "",
-        },
-        "all_flags": all_flags,
+        "aggregate": aggregate,
+        "property_ranking": property_ranking,
     }

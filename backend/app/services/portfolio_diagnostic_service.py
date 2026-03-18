@@ -1,82 +1,94 @@
-"""Portfolio diagnostic service — orchestrates portfolio-wide pricing diagnostic.
+"""Portfolio diagnostic service — orchestrates cross-property diagnosis.
 
-Pipeline: for each property → metrics → flags → aggregate → Claude diagnosis → action plan → store.
+Aggregates per-property diagnostics into a portfolio-level view with
+revenue efficiency scoring, gap decomposition, and property ranking.
 """
 import json
 import logging
-import time
-import uuid
-from datetime import date, datetime
 
-from sqlalchemy.orm import Session
-
-from app.models.property import Property
-from app.models.config import ClientConfig
-from app.models.diagnostic import DiagnosticRun, AuditLog
-from app.services.metrics_engine import compute_property_metrics
-from app.services.flag_generator import generate_flags
 from app.services.claude_client import ClaudeClient, ClaudeAPIError
-from app.engine.aggregator import aggregate_cross_property
+from app.engine.utils import safe_divide
 
 logger = logging.getLogger(__name__)
 
-PORTFOLIO_DIAGNOSIS_SYSTEM_PROMPT = """You are a senior multifamily revenue management analyst analyzing a multi-property portfolio. You receive aggregated metrics and flags for all properties, along with per-property breakdowns.
+PORTFOLIO_DIAGNOSIS_SYSTEM_PROMPT = """You are a senior multifamily portfolio strategist analyzing revenue performance across multiple properties. You receive aggregated revenue metrics, per-property revenue efficiency scores, and gap decompositions from a pricing engine.
 
-Produce a JSON diagnosis with:
-1. Portfolio health score (0-100) reflecting the overall state
-2. Per-property assessments with scores and grades
-3. Cross-property patterns and comparisons
-4. Prioritized recommendations across properties
+INPUT DATA YOU RECEIVE:
+- `aggregate`: portfolio-level totals including total_revenue_gap, portfolio_revenue_efficiency, total_renewal_opportunity.
+- `properties`: per-property revenue efficiency, revenue gap, renewal opportunity, unit-type detail.
+- `property_ranking`: properties ranked by revenue efficiency (worst first).
 
-SCORING RUBRIC:
-- Multiple properties with CRITICAL flags, high vacancy → score 15-30
-- One property in crisis, others stable → score 35-50
-- All properties have concerns but no crisis → score 50-65
-- Minor issues across portfolio → score 65-80
-- All properties healthy → score 80-95
+Produce a JSON portfolio diagnosis with:
+1. Portfolio revenue efficiency score from the pre-computed `aggregate.portfolio_revenue_efficiency`.
+2. Grade using the 5-zone system:
+   - CRISIS (0-39): Multiple properties with dominant vacancy
+   - DISTRESSED (40-54): Portfolio-wide pricing/vacancy pressure
+   - IMBALANCED (55-69): Some properties dragging performance
+   - OPPORTUNITY (70-84): Generally healthy, pricing upside exists
+   - OPTIMIZED (85-100): Operating near the revenue frontier
+3. Per-property assessments ranked by revenue gap (largest first).
+4. Cross-property risks (cannibalization, submarket competition).
+5. Top 3 priorities with dollar amounts from pre-computed gaps.
 
 CRITICAL RULES:
-- Every dollar amount must come from the pre-computed facts. Do NOT invent numbers.
-- Rank properties by urgency (daily burn rate is the primary signal)
-- Identify patterns that appear across multiple properties
+- USE the pre-computed portfolio_revenue_efficiency score. Do NOT recalculate.
+- Every dollar amount must come from the pre-computed facts provided.
+- Rank properties by revenue gap (largest gap = highest priority).
+- Identify cross-property risks (e.g., cutting rents at one property may pull comps down for another).
 
 Output ONLY valid JSON matching this schema:
 {
-  "cross_property_assessment": {
-    "summary": "string",
-    "portfolio_score": "int 0-100",
-    "property_rankings": [{"property": "string", "score": "int", "grade": "string", "daily_burn": "float"}],
-    "cross_property_patterns": ["string"],
-    "top_3_priorities": ["string"]
-  },
+  "portfolio_score": "float (from aggregate.portfolio_revenue_efficiency)",
+  "portfolio_grade": "OPTIMIZED|OPPORTUNITY|IMBALANCED|DISTRESSED|CRISIS",
+  "portfolio_summary": "string",
   "property_assessments": [{
+    "property_key": "string",
     "property_name": "string",
-    "health_score": "int 0-100",
-    "grade": "HEALTHY|WATCH|ACTION_NEEDED|CRITICAL",
-    "key_findings": ["string"],
-    "recommended_actions": [{
-      "action_type": "string",
-      "unit_type": "string",
-      "description": "string",
-      "priority": "int 1-5",
-      "confidence": "HIGH|MEDIUM|LOW"
-    }]
-  }]
+    "revenue_efficiency": "float",
+    "revenue_gap": "float",
+    "grade": "string",
+    "dominant_issues": ["string"],
+    "recommended_focus": "string"
+  }],
+  "cross_property_risks": ["string"],
+  "top_3_priorities": [{
+    "property": "string",
+    "action": "string",
+    "monthly_impact": "float"
+  }],
+  "portfolio_renewal_opportunity": {
+    "total_annual": "float",
+    "by_property": [{"property": "string", "annual_capture": "float"}]
+  }
 }"""
 
-PORTFOLIO_ACTION_PLAN_SYSTEM_PROMPT = """You are a senior multifamily revenue management strategist creating a 30-day action plan for a multi-property portfolio. Actions must be prioritized ACROSS properties by impact (daily burn reduction).
+PORTFOLIO_ACTION_PLAN_SYSTEM_PROMPT = """You are a senior multifamily portfolio strategist. Given a portfolio diagnosis with revenue efficiency grades, revenue gap decompositions, and property rankings, produce a 30-day phased action plan ranked by revenue impact across properties.
 
-The plan has 4 phases:
-- Phase 1 (Days 1-3): Immediate stabilization — address highest-burn properties first
-- Phase 2 (Days 4-14): Calibrate & optimize across all properties
-- Phase 3 (Days 15-21): Evaluate experiments, branch based on outcomes
-- Phase 4 (Days 22-30): Lock strategies
+PHASE STRUCTURE ADAPTS TO THE WORST PROPERTY GRADE:
+
+CRISIS/DISTRESSED (score < 55):
+- Phase 1 (Days 1-3): Triage worst properties — reduce asking, offer concessions
+- Phase 2 (Days 4-14): Stabilize across portfolio, monitor velocity
+- Phase 3 (Days 15-21): Evaluate fill progress, begin optimization at healthier properties
+- Phase 4 (Days 22-30): Lock strategies, shift focus to renewals
+
+IMBALANCED (score 55-69):
+- Phase 1 (Days 1-3): Quick wins across properties — reprice, launch experiments
+- Phase 2 (Days 4-14): Portfolio-wide experiment observation + renewal increases
+- Phase 3 (Days 15-21): Converge experiments, cross-property evaluation
+- Phase 4 (Days 22-30): Lock strategies, seasonal positioning
+
+OPPORTUNITY/OPTIMIZED (score 70+):
+- Phase 1 (Days 1-3): Implement renewal increases, remove concessions
+- Phase 2 (Days 4-14): Test higher asking across properties
+- Phase 3 (Days 15-21): Evaluate, seasonal positioning
+- Phase 4 (Days 22-30): Maintain and monitor
 
 CRITICAL RULES:
 - All dollar amounts are pre-computed. Use them exactly.
-- Actions must specify which property AND unit type they apply to
-- Rank Phase 1 actions by daily burn impact (highest first)
-- Phase 3 must include conditional branching per property
+- Actions ranked by revenue impact (largest gap properties first).
+- Every action includes: property, lever, dollar impact, confidence, downside risk.
+- Cross-property coordination: ensure repricing at one property does not undercut another.
 
 Output ONLY valid JSON matching this schema:
 {
@@ -85,283 +97,239 @@ Output ONLY valid JSON matching this schema:
     "name": "string",
     "days": "string",
     "actions": [{
-      "id": "string",
       "property": "string",
-      "unit_type": "string",
       "action_type": "string",
+      "lever": "FILL|REPRICE|RENEW|DE_CONCESSION",
       "description": "string",
-      "rationale": "string"
+      "expected_impact_monthly": "float",
+      "confidence": "HIGH|MEDIUM|LOW"
     }]
   }],
   "revenue_impact_summary": {
-    "current_portfolio_daily_burn": "float",
-    "current_portfolio_monthly_cost": "float",
-    "projected_monthly_savings": "float"
+    "total_portfolio_gap_monthly": "float",
+    "projected_capture_monthly": "float",
+    "total_renewal_opportunity_annual": "float"
   }
 }"""
 
 
-def run_portfolio_diagnostic(
-    db: Session,
-    organization_id: str,
-    user_id: str,
+def generate_portfolio_diagnosis(
+    cross_property_data: dict,
     claude_client: ClaudeClient | None = None,
-    reference_date: date | None = None,
-) -> DiagnosticRun:
-    """Run the full portfolio diagnostic pipeline.
+) -> tuple[dict, bool]:
+    """Generate portfolio-level diagnosis via Claude, with fallback.
 
     Args:
-        db: database session.
-        organization_id: UUID of the organization.
-        user_id: UUID of user triggering the run.
-        claude_client: optional ClaudeClient (for testing with mocks).
-        reference_date: optional date override.
+        cross_property_data: output of aggregate_cross_property().
+        claude_client: optional client for testing.
 
     Returns:
-        DiagnosticRun ORM object with all results.
+        Tuple of (diagnosis_dict, is_fallback).
     """
-    if reference_date is None:
-        reference_date = date.today()
     if claude_client is None:
         claude_client = ClaudeClient()
 
-    total_start = time.perf_counter()
-
-    # Create portfolio diagnostic run
-    run = DiagnosticRun(
-        id=uuid.uuid4(),
-        property_id=None,
-        organization_id=organization_id,
-        scope="portfolio",
-        config_id=None,
-        run_date=datetime.utcnow(),
-        triggered_by=user_id,
-        status="RUNNING",
-    )
-    db.add(run)
-    db.flush()
+    user_msg = json.dumps({
+        "aggregate": cross_property_data.get("aggregate", {}),
+        "properties": {
+            k: {
+                "property_name": v.get("property_name", k),
+                "revenue_efficiency": v.get("revenue_efficiency", 0),
+                "revenue_gap": v.get("revenue_gap", 0),
+                "renewal_opportunity": v.get("renewal_opportunity", 0),
+                "total_units": v.get("total_units", 0),
+                "total_vacant": v.get("total_vacant", 0),
+            }
+            for k, v in cross_property_data.get("properties", {}).items()
+        },
+        "property_ranking": cross_property_data.get("property_ranking", []),
+    }, indent=2)
 
     try:
-        # Step 1: Compute metrics for all properties
-        metrics_start = time.perf_counter()
-        props = db.query(Property).filter_by(organization_id=organization_id).all()
-
-        all_property_data = []
-        skipped = []
-        for prop in props:
-            config = db.query(ClientConfig).filter_by(
-                property_id=prop.id, is_active=True
-            ).first()
-            if not config:
-                skipped.append(prop.name)
-                logger.warning("Skipping property %s — no active config", prop.name)
-                continue
-
-            config_dict = {
-                k: getattr(config, k) or {}
-                for k in [
-                    "occupancy_thresholds", "exposure_thresholds", "pricing_tolerance",
-                    "concession_policy", "renewal_policy", "lease_term_policy",
-                    "experiment_policy", "amenity_benchmarks",
-                ]
-            }
-            metrics = compute_property_metrics(db, str(prop.id), config_dict, reference_date)
-
-            prop_flags = {}
-            for ut_code, ut_metrics in metrics["unit_type_metrics"].items():
-                prop_flags[ut_code] = generate_flags(ut_metrics, config_dict)
-
-            all_property_data.append({"metrics": metrics, "flags": prop_flags})
-
-        if not all_property_data:
-            raise ValueError("No properties with active configs found")
-
-        # Step 2: Aggregate across properties
-        portfolio_metrics = aggregate_cross_property(all_property_data)
-        run.metrics_compute_ms = int((time.perf_counter() - metrics_start) * 1000)
-        run.metrics_json = portfolio_metrics
-
-        # Flatten flags for storage
-        run.flags_json = portfolio_metrics["all_flags"]
-        db.flush()
-
-        # Step 3: Claude diagnosis
-        diagnosis_start = time.perf_counter()
-        diagnosis_msg = json.dumps({
-            "aggregate": portfolio_metrics["aggregate"],
-            "properties": {
-                name: {
-                    "unit_type_metrics": {
-                        code: {
-                            "occupancy": m["occupancy_metrics"],
-                            "exposure": m["exposure_metrics"],
-                            "pricing": m["pricing_spreads"],
-                            "revenue": m["revenue_metrics"],
-                        }
-                        for code, m in pdata["unit_type_metrics"].items()
-                    },
-                    "portfolio_metrics": pdata["portfolio_metrics"],
-                }
-                for name, pdata in portfolio_metrics["properties"].items()
-            },
-            "flags_by_property": {
-                name: {
-                    code: [{"type": f["type"], "severity": f["severity"]} for f in flags]
-                    for code, flags in prop_flags.items()
-                }
-                for name, prop_flags in portfolio_metrics["all_flags"].items()
-            },
-        }, indent=2)
-
-        try:
-            diagnosis = claude_client.call_json(PORTFOLIO_DIAGNOSIS_SYSTEM_PROMPT, diagnosis_msg)
-        except (ClaudeAPIError, Exception) as e:
-            logger.error("Portfolio Claude diagnosis failed: %s", e)
-            diagnosis = _fallback_portfolio_diagnosis(portfolio_metrics)
-
-        run.diagnosis_api_ms = int((time.perf_counter() - diagnosis_start) * 1000)
-        run.diagnosis_json = diagnosis
-        db.flush()
-
-        # Step 4: Claude action plan
-        action_start = time.perf_counter()
-        action_msg = json.dumps({
-            "diagnosis": diagnosis,
-            "aggregate": portfolio_metrics["aggregate"],
-        }, indent=2)
-
-        try:
-            action_plan = claude_client.call_json(PORTFOLIO_ACTION_PLAN_SYSTEM_PROMPT, action_msg)
-        except (ClaudeAPIError, Exception) as e:
-            logger.error("Portfolio Claude action plan failed: %s", e)
-            action_plan = _fallback_portfolio_action_plan(portfolio_metrics)
-
-        run.action_plan_api_ms = int((time.perf_counter() - action_start) * 1000)
-        run.action_plan_json = action_plan
-
-        run.status = "COMPLETED"
-        run.total_ms = int((time.perf_counter() - total_start) * 1000)
-
-    except Exception as e:
-        run.status = "FAILED"
-        run.error_message = str(e)[:2000]
-        run.total_ms = int((time.perf_counter() - total_start) * 1000)
-        logger.exception("Portfolio diagnostic failed for org %s", organization_id)
-
-    db.flush()
-
-    # Audit log
-    audit = AuditLog(
-        id=uuid.uuid4(),
-        organization_id=organization_id,
-        user_id=user_id,
-        action="RUN_PORTFOLIO_DIAGNOSTIC",
-        entity_type="diagnostic_run",
-        entity_id=str(run.id),
-        details={
-            "scope": "portfolio",
-            "property_count": len(all_property_data) if 'all_property_data' in dir() else 0,
-            "properties_skipped": skipped if 'skipped' in dir() else [],
-            "status": run.status,
-            "total_ms": run.total_ms,
-        },
-    )
-    db.add(audit)
-    db.flush()
-
-    return run
-
-
-def _fallback_portfolio_diagnosis(portfolio_metrics: dict) -> dict:
-    """Generate fallback portfolio diagnosis when Claude is unavailable."""
-    agg = portfolio_metrics["aggregate"]
-
-    # Score based on blended occupancy and total burn
-    occ = agg["blended_occupancy"]
-    if occ < 0.80:
-        portfolio_score = 30
-    elif occ < 0.85:
-        portfolio_score = 45
-    elif occ < 0.90:
-        portfolio_score = 55
-    elif occ < 0.95:
-        portfolio_score = 70
-    else:
-        portfolio_score = 85
-
-    property_assessments = []
-    property_rankings = []
-    for prop_name, pdata in portfolio_metrics["properties"].items():
-        pm = pdata["portfolio_metrics"]
-        prop_occ = pm.get("blended_occupancy", 0)
-        prop_vacant = pm.get("total_vacant", 0)
-        prop_burn = sum(
-            ut["revenue_metrics"]["daily_vacancy_burn"]
-            for ut in pdata["unit_type_metrics"].values()
+        diagnosis = claude_client.call_json(
+            PORTFOLIO_DIAGNOSIS_SYSTEM_PROMPT, user_msg,
         )
+        return diagnosis, False
+    except (ClaudeAPIError, Exception) as e:
+        logger.warning("Portfolio diagnosis failed, using fallback: %s", e)
+        return _fallback_portfolio_diagnosis(cross_property_data), True
 
-        # Score per property
-        if prop_occ < 0.82:
-            score, grade = 35, "ACTION_NEEDED"
-        elif prop_occ < 0.90:
-            score, grade = 55, "ACTION_NEEDED"
-        elif prop_occ < 0.95:
-            score, grade = 72, "WATCH"
-        else:
-            score, grade = 85, "HEALTHY"
 
-        prop_flags = portfolio_metrics["all_flags"].get(prop_name, {})
-        total_flags = sum(len(f) for f in prop_flags.values())
+def generate_portfolio_action_plan(
+    cross_property_data: dict,
+    diagnosis: dict,
+    claude_client: ClaudeClient | None = None,
+) -> tuple[dict, bool]:
+    """Generate portfolio-level action plan via Claude, with fallback.
+
+    Args:
+        cross_property_data: output of aggregate_cross_property().
+        diagnosis: portfolio diagnosis dict.
+        claude_client: optional client for testing.
+
+    Returns:
+        Tuple of (action_plan_dict, is_fallback).
+    """
+    if claude_client is None:
+        claude_client = ClaudeClient()
+
+    user_msg = json.dumps({
+        "diagnosis": diagnosis,
+        "aggregate": cross_property_data.get("aggregate", {}),
+        "property_ranking": cross_property_data.get("property_ranking", []),
+    }, indent=2)
+
+    try:
+        plan = claude_client.call_json(
+            PORTFOLIO_ACTION_PLAN_SYSTEM_PROMPT, user_msg,
+        )
+        return plan, False
+    except (ClaudeAPIError, Exception) as e:
+        logger.warning("Portfolio action plan failed, using fallback: %s", e)
+        return _fallback_portfolio_action_plan(cross_property_data, diagnosis), True
+
+
+def _score_to_grade(score: float) -> str:
+    """Map a numeric score to a revenue efficiency grade."""
+    if score >= 85:
+        return "OPTIMIZED"
+    elif score >= 70:
+        return "OPPORTUNITY"
+    elif score >= 55:
+        return "IMBALANCED"
+    elif score >= 40:
+        return "DISTRESSED"
+    else:
+        return "CRISIS"
+
+
+def _fallback_portfolio_diagnosis(cross_property_data: dict) -> dict:
+    """Generate fallback portfolio diagnosis from pre-computed data.
+
+    Uses revenue gap decomposition to rank properties by gap (largest first).
+    """
+    aggregate = cross_property_data.get("aggregate", {})
+    properties = cross_property_data.get("properties", {})
+    ranking = cross_property_data.get("property_ranking", [])
+
+    portfolio_score = aggregate.get("portfolio_revenue_efficiency", 0)
+    portfolio_grade = _score_to_grade(portfolio_score)
+
+    # Per-property assessments sorted by revenue gap descending
+    property_assessments = []
+    sorted_props = sorted(
+        properties.items(),
+        key=lambda item: item[1].get("revenue_gap", 0),
+        reverse=True,
+    )
+
+    for prop_key, prop_data in sorted_props:
+        rev_eff = prop_data.get("revenue_efficiency", 0)
+        gap = prop_data.get("revenue_gap", 0)
+        grade = _score_to_grade(rev_eff)
+
+        issues = []
+        if gap > 0:
+            issues.append(f"${gap:,.0f}/mo revenue gap")
+        vacancy_cost = prop_data.get("total_monthly_vacancy_cost", 0)
+        if vacancy_cost > 0:
+            issues.append(f"${vacancy_cost:,.0f}/mo vacancy cost")
+        renewal = prop_data.get("renewal_opportunity", 0)
+        if renewal > 0:
+            issues.append(f"${renewal:,.0f}/yr renewal opportunity")
 
         property_assessments.append({
-            "property_name": prop_name,
-            "health_score": score,
+            "property_key": prop_key,
+            "property_name": prop_data.get("property_name", prop_key),
+            "revenue_efficiency": rev_eff,
+            "revenue_gap": gap,
             "grade": grade,
-            "key_findings": [
-                f"{prop_vacant} vacant units, {prop_occ:.0%} occupancy",
-                f"Daily burn: ${prop_burn:,.0f}/day",
-                f"{total_flags} pricing flags across unit types",
-            ],
-            "recommended_actions": [],
-        })
-        property_rankings.append({
-            "property": prop_name,
-            "score": score,
-            "grade": grade,
-            "daily_burn": prop_burn,
+            "dominant_issues": issues[:3],
+            "recommended_focus": (
+                "Fill vacancies" if grade in ("CRISIS", "DISTRESSED")
+                else "Reprice and experiment" if grade == "IMBALANCED"
+                else "Capture renewals and test upside" if grade == "OPPORTUNITY"
+                else "Maintain and monitor"
+            ),
         })
 
-    property_rankings.sort(key=lambda x: x["score"])
+    # Top 3 priorities from ranked properties
+    top_3 = []
+    for prop in ranking[:3]:
+        gap = prop.get("revenue_gap", 0)
+        if gap > 0:
+            top_3.append({
+                "property": prop.get("property_name", prop.get("property_key", "")),
+                "action": f"Close ${gap:,.0f}/mo revenue gap",
+                "monthly_impact": gap,
+            })
+
+    # Renewal summary by property
+    renewal_by_prop = []
+    for prop_key, prop_data in properties.items():
+        annual = prop_data.get("renewal_opportunity", 0)
+        if annual > 0:
+            renewal_by_prop.append({
+                "property": prop_data.get("property_name", prop_key),
+                "annual_capture": annual,
+            })
 
     return {
-        "cross_property_assessment": {
-            "summary": f"Portfolio has {agg['total_vacant']} vacant units across {agg['property_count']} properties, burning ${agg['total_daily_burn']:,.0f}/day.",
-            "portfolio_score": portfolio_score,
-            "property_rankings": property_rankings,
-            "cross_property_patterns": [],
-            "top_3_priorities": [
-                f"Address vacancy at {agg['worst_property']} (highest burn)",
-                f"Total portfolio burn: ${agg['total_daily_burn']:,.0f}/day = ${agg['total_monthly_cost']:,.0f}/month",
-                f"Blended occupancy: {occ:.0%}",
-            ],
-        },
+        "portfolio_score": portfolio_score,
+        "portfolio_grade": portfolio_grade,
+        "portfolio_summary": (
+            f"Fallback diagnosis. Portfolio revenue efficiency: {portfolio_score:.1f}% "
+            f"({portfolio_grade}). Total gap: ${aggregate.get('total_revenue_gap', 0):,.0f}/mo."
+        ),
         "property_assessments": property_assessments,
+        "cross_property_risks": [],
+        "top_3_priorities": top_3,
+        "portfolio_renewal_opportunity": {
+            "total_annual": aggregate.get("total_renewal_opportunity", 0),
+            "by_property": renewal_by_prop,
+        },
     }
 
 
-def _fallback_portfolio_action_plan(portfolio_metrics: dict) -> dict:
-    """Generate fallback portfolio action plan when Claude is unavailable."""
-    agg = portfolio_metrics["aggregate"]
+def _fallback_portfolio_action_plan(
+    cross_property_data: dict, diagnosis: dict,
+) -> dict:
+    """Generate fallback portfolio action plan from pre-computed data.
+
+    Phase naming adapts to worst property grade in the diagnosis.
+    """
+    aggregate = cross_property_data.get("aggregate", {})
+
+    # Determine worst grade
+    grade_order = {"CRISIS": 0, "DISTRESSED": 1, "IMBALANCED": 2, "OPPORTUNITY": 3, "OPTIMIZED": 4}
+    worst_grade = "OPTIMIZED"
+    for pa in diagnosis.get("property_assessments", []):
+        g = pa.get("grade", "OPTIMIZED")
+        if grade_order.get(g, 4) < grade_order.get(worst_grade, 4):
+            worst_grade = g
+
+    phase_names = {
+        "CRISIS": ["Triage Worst Properties", "Stabilize Portfolio", "Evaluate & Optimize", "Lock Strategy"],
+        "DISTRESSED": ["Triage Worst Properties", "Stabilize Portfolio", "Evaluate & Optimize", "Lock Strategy"],
+        "IMBALANCED": ["Quick Wins", "Experiment & Renew", "Converge", "Lock Strategy"],
+        "OPPORTUNITY": ["Renewal Increases", "Test Higher Asking", "Seasonal Positioning", "Maintain"],
+        "OPTIMIZED": ["Hold & Document", "Term Premium Tests", "Seasonal Positioning", "Maintain"],
+    }
+    names = phase_names.get(worst_grade, phase_names["IMBALANCED"])
+
+    total_gap = aggregate.get("total_revenue_gap", 0)
+    total_renewal = aggregate.get("total_renewal_opportunity", 0)
+
     return {
         "phases": [
-            {"phase_number": 1, "name": "Immediate Stabilization", "days": "1-3", "actions": []},
-            {"phase_number": 2, "name": "Calibration", "days": "4-14", "actions": []},
-            {"phase_number": 3, "name": "Decision Point", "days": "15-21", "actions": []},
-            {"phase_number": 4, "name": "Optimization", "days": "22-30", "actions": []},
+            {"phase_number": 1, "name": names[0], "days": "1-3", "actions": []},
+            {"phase_number": 2, "name": names[1], "days": "4-14", "actions": []},
+            {"phase_number": 3, "name": names[2], "days": "15-21", "actions": []},
+            {"phase_number": 4, "name": names[3], "days": "22-30", "actions": []},
         ],
         "revenue_impact_summary": {
-            "current_portfolio_daily_burn": agg["total_daily_burn"],
-            "current_portfolio_monthly_cost": agg["total_monthly_cost"],
-            "projected_monthly_savings": agg["total_monthly_cost"] * 0.3,
+            "total_portfolio_gap_monthly": total_gap,
+            "projected_capture_monthly": total_gap * 0.5,
+            "total_renewal_opportunity_annual": total_renewal,
         },
     }

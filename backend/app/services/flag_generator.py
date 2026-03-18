@@ -54,7 +54,7 @@ def generate_flags(metrics: dict, config: dict) -> list[dict]:
             "type": "OCCUPANCY_PUSH_ELIGIBLE",
             "value": occ,
             "threshold": occ_t.get("push_pricing_above"),
-            "severity": "POSITIVE",
+            "severity": "HIGH",
         })
     elif occ < occ_t.get("crisis_below", 0.82):
         flags.append({
@@ -140,17 +140,28 @@ def generate_flags(metrics: dict, config: dict) -> list[dict]:
             "severity": "MEDIUM",
         })
 
-    # --- Concession trigger ---
+    # --- Concession trigger (with conditional reclassification) ---
     conc_triggers = conc_t.get("concession_triggers", {})
     min_exp = conc_triggers.get("min_exposure_pct", 0.12)
     min_dom = conc_triggers.get("min_days_on_market", 21)
+    removal_occ = conc_t.get("removal_occupancy_threshold", 0.93)
     if exp >= min_exp and dom >= min_dom:
-        flags.append({
-            "type": "CONCESSION_TRIGGER",
-            "value": {"exposure": exp, "dom": dom},
-            "threshold": {"min_exposure": min_exp, "min_dom": min_dom},
-            "severity": "HIGH",
-        })
+        if occ >= removal_occ:
+            # High occupancy: concessions should be removed, not added
+            flags.append({
+                "type": "CONCESSION_REMOVAL_ELIGIBLE",
+                "value": {"exposure": exp, "dom": dom, "occupancy": occ},
+                "threshold": {"min_exposure": min_exp, "min_dom": min_dom,
+                              "removal_occupancy": removal_occ},
+                "severity": "MEDIUM",
+            })
+        else:
+            flags.append({
+                "type": "CONCESSION_TRIGGER",
+                "value": {"exposure": exp, "dom": dom},
+                "threshold": {"min_exposure": min_exp, "min_dom": min_dom},
+                "severity": "HIGH",
+            })
 
     # --- Loss to lease ---
     if in_place > 0:
@@ -212,15 +223,19 @@ def generate_flags(metrics: dict, config: dict) -> list[dict]:
             "severity": "HIGH",
         })
 
-    # --- Renewal freeze ---
-    never_increase_above = renew_t.get("never_increase_above_occupancy_threshold", 0.88)
-    if occ < never_increase_above:
+    # --- Renewal freeze (config-driven threshold) ---
+    freeze_below = renew_t.get("freeze_below_occupancy", 0.82)
+    if occ < freeze_below:
         flags.append({
             "type": "RENEWAL_FREEZE_RECOMMENDED",
             "value": occ,
-            "threshold": never_increase_above,
+            "threshold": freeze_below,
             "severity": "MEDIUM",
         })
+
+    # === New revenue optimization flags ===
+
+    _append_revenue_optimization_flags(flags, metrics, config)
 
     # --- MAB eligibility ---
     min_vacant = exp_pol.get("min_vacant_for_experiment", 3)
@@ -234,3 +249,135 @@ def generate_flags(metrics: dict, config: dict) -> list[dict]:
         })
 
     return flags
+
+
+def _append_revenue_optimization_flags(
+    flags: list[dict],
+    metrics: dict,
+    config: dict,
+) -> None:
+    """Append revenue optimization flags based on enriched metrics sections.
+
+    Uses .get() with defaults for all new metrics sections so the generator
+    remains backward-compatible with metrics dicts that lack these sections.
+
+    Args:
+        flags: Mutable list to append flags to.
+        metrics: Complete metrics dict (may include elasticity, optimal_pricing,
+                 renewal_opportunity, revenue_gap, revenue_efficiency sections).
+        config: Client config dict.
+    """
+    occ = metrics["occupancy_metrics"]["occupancy_rate"]
+    exp = metrics["exposure_metrics"]["total_exposure_pct"]
+    pricing = metrics["pricing_spreads"]
+    asking = pricing["asking_rent"]
+    comps = pricing["comps_rent"]
+    in_place = pricing["in_place_rent"]
+
+    price_t = config.get("pricing_tolerance", {})
+    conc_t = config.get("concession_policy", {})
+
+    # New metrics sections (all optional, backward-compatible)
+    optimal = metrics.get("optimal_pricing", {})
+    renewal = metrics.get("renewal_opportunity", {})
+    elasticity = metrics.get("elasticity", {})
+    revenue_gap = metrics.get("revenue_gap", {})
+
+    # LTL from ltl_analysis
+    ltl = metrics.get("ltl_analysis", {})
+    ltl_pct = ltl.get("ltl_pct", 0.0)
+
+    # --- 1. RENT_PUSH_OPPORTUNITY (HIGH) ---
+    # Trigger: occ >= 0.94 AND optimal_pricing exists AND asking < optimal by > gap threshold
+    rent_push_gap = price_t.get("rent_push_gap_pct", 0.03)
+    optimal_asking = optimal.get("optimal_asking", 0)
+    if occ >= 0.94 and optimal_asking > 0 and asking > 0:
+        gap_pct = safe_divide(optimal_asking - asking, asking)
+        if gap_pct > rent_push_gap:
+            flags.append({
+                "type": "RENT_PUSH_OPPORTUNITY",
+                "value": round_half_up(gap_pct * 100, 1),
+                "threshold": rent_push_gap,
+                "severity": "HIGH",
+            })
+
+    # --- 2. HIGH_LTL_CAPTURE (HIGH) ---
+    # Trigger: LTL > 5% of in_place AND occ >= 0.88
+    # Note: ltl_pct is stored as percentage points (e.g. 7.6 means 7.6%)
+    if in_place > 0 and ltl_pct > 5.0 and occ >= 0.88:
+        flags.append({
+            "type": "HIGH_LTL_CAPTURE",
+            "value": ltl_pct,
+            "threshold": 5.0,
+            "severity": "HIGH",
+        })
+
+    # --- 3. RENEWAL_INCREASE_ELIGIBLE (MEDIUM) ---
+    # Trigger: upcoming_renewals_90d > 0 AND occ >= 0.90 AND LTL > 0
+    upcoming_renewals = renewal.get("upcoming_renewals_90d", 0)
+    if upcoming_renewals > 0 and occ >= 0.90 and ltl_pct > 0:
+        flags.append({
+            "type": "RENEWAL_INCREASE_ELIGIBLE",
+            "value": {
+                "upcoming_renewals": upcoming_renewals,
+                "ltl_pct": round_half_up(ltl_pct * 100, 1),
+            },
+            "threshold": {"min_occupancy": 0.90, "min_ltl_pct": 0},
+            "severity": "MEDIUM",
+        })
+
+    # --- 4. UNDERPRICED_VS_COMPS (MEDIUM) ---
+    # Trigger: asking < comps by > threshold AND occ >= 0.90
+    underpriced_threshold = price_t.get("underpriced_vs_comps_pct", 0.03)
+    if comps > 0 and asking > 0 and occ >= 0.90:
+        underpriced_pct = safe_divide(comps - asking, comps)
+        if underpriced_pct > underpriced_threshold:
+            flags.append({
+                "type": "UNDERPRICED_VS_COMPS",
+                "value": round_half_up(underpriced_pct * 100, 1),
+                "threshold": underpriced_threshold,
+                "severity": "MEDIUM",
+            })
+
+    # --- 5. CONCESSION_REMOVAL_ELIGIBLE (MEDIUM) ---
+    # Trigger: concession units exist AND occ >= 0.93 AND exposure < 0.10
+    # This fires independently of the CONCESSION_TRIGGER conditional above.
+    # The conditional in the main body handles the case where concession
+    # trigger conditions are met but occupancy is high enough to remove instead.
+    # This rule catches the case where concessions exist at high occ even when
+    # the concession trigger conditions (high exposure + high DOM) are NOT met.
+    gap_components = revenue_gap.get("gap_components", {})
+    concession_drag = gap_components.get("concession_drag", {}).get("amount", 0)
+    removal_occ = conc_t.get("removal_occupancy_threshold", 0.93)
+    if concession_drag > 0 and occ >= removal_occ and exp < 0.10:
+        # Only append if not already added by the CONCESSION_TRIGGER conditional
+        existing_types = {f["type"] for f in flags}
+        if "CONCESSION_REMOVAL_ELIGIBLE" not in existing_types:
+            flags.append({
+                "type": "CONCESSION_REMOVAL_ELIGIBLE",
+                "value": {
+                    "concession_drag_monthly": concession_drag,
+                    "occupancy": occ,
+                    "exposure": exp,
+                },
+                "threshold": {
+                    "min_occupancy": removal_occ,
+                    "max_exposure": 0.10,
+                },
+                "severity": "MEDIUM",
+            })
+
+    # --- 6. ELASTICITY_WARNING (INFO) ---
+    # Trigger: direction == "ELASTIC" AND confidence >= "MEDIUM"
+    direction = elasticity.get("direction", "UNKNOWN")
+    confidence = elasticity.get("confidence", "LOW")
+    if direction == "ELASTIC" and confidence in ("MEDIUM", "HIGH"):
+        flags.append({
+            "type": "ELASTICITY_WARNING",
+            "value": {
+                "coefficient": elasticity.get("elasticity_coefficient", 0.0),
+                "direction": direction,
+            },
+            "threshold": {"direction": "ELASTIC", "min_confidence": "MEDIUM"},
+            "severity": "INFO",
+        })

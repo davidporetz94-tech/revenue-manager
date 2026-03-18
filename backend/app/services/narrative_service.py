@@ -16,62 +16,59 @@ logger = logging.getLogger(__name__)
 
 DIAGNOSTIC_NARRATIVE_PROMPT = """You are a senior revenue management consultant presenting to a client VP of Operations. Generate narrative text for each slide of a pricing diagnostic presentation.
 
+INPUT CONTEXT:
+- Each unit type has a revenue efficiency grade: OPTIMIZED, OPPORTUNITY, IMBALANCED, DISTRESSED, or CRISIS.
+- Each unit type has a revenue gap decomposition showing gaps by lever: FILL, REPRICE, RENEW, DE_CONCESSION.
+- Renewal capture opportunities are pre-computed with specific dollar amounts.
+- Use these archetypes to frame your narrative:
+  - HIGH OCC + UNDERPRICED: "push rents" — frame as upside capture opportunity
+  - DECLINING OCC: "rebalance" — frame as pricing misalignment needing correction
+  - CRISIS: "fill" — frame as urgent vacancy bleed requiring immediate action
+  - PUZZLE (priced at comps but not leasing): "investigate + test" — frame as non-price friction
+
 STYLE RULES:
 - Address the client directly: "Your B1 units..." not "The B1 units..."
 - Confident, specific, data-driven. No hedging.
 - Plain text only — NO markdown formatting (no **bold**, no ## headers)
 - Every dollar amount must come from the provided metrics. Do NOT invent numbers.
+- Reference revenue efficiency grades, not just occupancy numbers.
+- Quantify recommendations using gap decomposition levers and dollar amounts.
 - Max 4 sentences per narrative block.
 - Max 25 words per bullet point.
 
-TONE RULES (mandatory):
-- NEVER use: "It appears that...", "You may want to consider...", "This could potentially..."
-- ALWAYS use direct statements: "B1 is overpriced by $91 against every comp."
-- ALWAYS use direct recommendations: "Cut B1 asking rent to $1,475 immediately."
-- ALWAYS include dollar amounts and revenue impact in every observation.
-- ALWAYS use active voice: "Reduce asking rent by $50" not "Prices should be adjusted"
-- Address the client directly: "Your B1 units..." not "The B1 units..."
-
-ARCHETYPE GUIDANCE (use the metrics to determine which pattern applies):
-- HIGH OCC (≥95%) + aligned with comps: Emphasize pricing power. "You have room to push."
-- DECLINING OCC + rising asking: Emphasize the trajectory. "Occupancy has dropped X points per month for N months while asking rent increased. The market is telling you something."
-- CRISIS (≥2 CRITICAL flags): Emphasize urgency with daily burn. "Every day of delay costs $X."
-- PUZZLE (priced at comps but not leasing): Frame as investigation. "The price is right — comps confirm it. So why are N units sitting for X days? This needs investigation, not a price cut."
-
 Output ONLY valid JSON with this schema:
 {
-  "slide_2_headline": "string (max 20 words, clear verdict)",
+  "slide_2_headline": "string (max 20 words, clear verdict referencing worst grade)",
   "slide_2_findings": ["string", "string", "string"],
-  "slide_4_narrative": "string (Property A analysis)",
-  "slide_5_narrative": "string (Property B analysis, emphasize crisis)",
-  "slide_6_narrative": "string (trend analysis insights)",
-  "slide_7_narrative": "string (revenue at risk urgency)",
-  "slide_11_narrative": "string (investigation priorities)",
-  "slide_12_summary": "string (key takeaway and call to action)"
+  "slide_4_narrative": "string (Property A analysis — grade + dominant lever + dollar impact)",
+  "slide_5_narrative": "string (Property B analysis — grade + dominant lever + dollar impact)",
+  "slide_6_narrative": "string (trend analysis — momentum dimension insights)",
+  "slide_7_narrative": "string (revenue gap urgency — total gap with lever breakdown)",
+  "slide_11_narrative": "string (investigation priorities — low-confidence areas)",
+  "slide_12_summary": "string (key takeaway: total capturable revenue + top 2 actions)"
 }"""
 
 ACTION_NARRATIVE_PROMPT = """You are a senior revenue management consultant presenting a 30-day action plan to a client VP of Operations.
 
+INPUT CONTEXT:
+- The action plan phases adapt to the dominant grade: CRISIS units get "fill" phases, OPPORTUNITY units get "push rents" phases.
+- Every action has a lever (FILL/REPRICE/RENEW/DE_CONCESSION), dollar impact, confidence, and downside risk.
+- Renewal capture opportunities have specific dollar amounts and turnover risk estimates.
+
 STYLE RULES:
 - Address the client directly
 - Use plain language: "If 2 of your 3 test units lease..." not "convergence criterion met"
-- Explain WHY each action is recommended, not just WHAT
+- Explain WHY each action is recommended using the revenue lever framework
+- Reference dollar amounts from the revenue gap decomposition
+- Frame renewals as a revenue capture opportunity, not just retention
 - Plain text only — NO markdown formatting
 - Max 4 sentences per narrative block
 
-TONE RULES (mandatory):
-- NEVER use: "It appears that...", "You may want to consider...", "This could potentially..."
-- ALWAYS use direct language: "Cut B1 to $1,475 on Day 1" not "Consider adjusting pricing"
-- ALWAYS include dollar amounts from the pre-computed facts
-- ALWAYS use active voice and imperative mood for actions
-- Frame experiments as business decisions: "Test $1,358 vs control $1,411 on your 5 vacant A2 units"
-- Frame decision points in plain language: "If 2 of 3 test units lease faster, lock the lower price"
-
 Output ONLY valid JSON with this schema:
 {
-  "slide_8_narrative": "string (action plan overview and rationale)",
-  "slide_9_narrative": "string (Phase 1 detail — what happens in first 3 days)",
-  "slide_10_narrative": "string (Day 15 decision logic in plain language)"
+  "slide_8_narrative": "string (action plan overview: total capturable revenue + phase structure rationale)",
+  "slide_9_narrative": "string (Phase 1 detail: what happens in first 3 days, which levers activate)",
+  "slide_10_narrative": "string (Day 15 decision logic: experiment results + renewal evaluation)"
 }"""
 
 
@@ -154,7 +151,7 @@ def _summarize_metrics(metrics: dict) -> dict:
     """Create a concise metrics summary for the Claude prompt."""
     summary = {}
     for code, m in metrics.get("unit_type_metrics", {}).items():
-        summary[code] = {
+        unit_summary = {
             "occupancy": m["occupancy_metrics"]["occupancy_rate"],
             "vacant": m["occupancy_metrics"]["vacant"],
             "exposure": m["exposure_metrics"]["total_exposure_pct"],
@@ -164,6 +161,24 @@ def _summarize_metrics(metrics: dict) -> dict:
             "daily_burn": m["revenue_metrics"]["daily_vacancy_burn"],
             "monthly_cost": m["revenue_metrics"]["monthly_vacancy_cost"],
         }
+        # Include revenue optimization data when available
+        efficiency = m.get("revenue_efficiency", {})
+        if efficiency:
+            unit_summary["revenue_efficiency_grade"] = efficiency.get("grade")
+            unit_summary["revenue_efficiency_score"] = efficiency.get("revenue_efficiency_score")
+
+        gap = m.get("revenue_gap", {})
+        if gap:
+            unit_summary["revenue_gap_monthly"] = gap.get("total_gap_monthly", 0)
+            unit_summary["dominant_lever"] = gap.get("dominant_lever")
+
+        renewal = m.get("renewal_opportunity", {})
+        if renewal:
+            unit_summary["upcoming_renewals"] = renewal.get("upcoming_renewals_90d", 0)
+            unit_summary["renewal_capture_monthly"] = renewal.get("net_monthly_capture", 0)
+
+        summary[code] = unit_summary
+
     portfolio = metrics.get("portfolio_metrics", {})
     summary["portfolio"] = {
         "total_units": portfolio.get("total_units", 0),
@@ -182,6 +197,8 @@ def _summarize_diagnosis(diagnosis: dict) -> dict:
         assessments[a["unit_type"]] = {
             "grade": a.get("grade"),
             "score": a.get("health_score"),
+            "dominant_lever": a.get("dominant_lever"),
+            "revenue_gap_monthly": a.get("revenue_gap_monthly", 0),
             "root_cause": a.get("root_cause"),
         }
     return assessments
@@ -201,6 +218,37 @@ def _extract_known_amounts(metrics: dict) -> set[int]:
                     r["revenue_at_risk_30d"]]:
             amounts.add(int(abs(val)))
 
+        # Revenue gap amounts
+        gap = m.get("revenue_gap", {})
+        if gap:
+            for val in [gap.get("total_gap_monthly", 0),
+                        gap.get("current_monthly_revenue", 0),
+                        gap.get("optimal_monthly_revenue", 0)]:
+                if val:
+                    amounts.add(int(abs(val)))
+            for comp in gap.get("gap_components", {}).values():
+                amt = comp.get("amount", 0)
+                if amt:
+                    amounts.add(int(abs(amt)))
+
+        # Optimal pricing amounts
+        opt = m.get("optimal_pricing", {})
+        if opt:
+            for val in [opt.get("optimal_asking", 0),
+                        opt.get("recommended_asking", 0),
+                        opt.get("revenue_gap_monthly", 0)]:
+                if val:
+                    amounts.add(int(abs(val)))
+
+        # Renewal amounts
+        renewal = m.get("renewal_opportunity", {})
+        if renewal:
+            for val in [renewal.get("net_monthly_capture", 0),
+                        renewal.get("gross_annual_capture", 0),
+                        renewal.get("recommended_increase_dollars", 0)]:
+                if val:
+                    amounts.add(int(abs(val)))
+
     # Portfolio totals
     portfolio = metrics.get("portfolio_metrics", {})
     amounts.add(int(portfolio.get("total_monthly_vacancy_cost", 0)))
@@ -211,11 +259,23 @@ def _extract_known_amounts(metrics: dict) -> set[int]:
     amounts.add(int(total_daily * 30))
     amounts.add(int(total_daily * 365))
 
+    # Total revenue gap
+    total_gap = sum(
+        m.get("revenue_gap", {}).get("total_gap_monthly", 0)
+        for m in metrics.get("unit_type_metrics", {}).values()
+    )
+    if total_gap:
+        amounts.add(int(abs(total_gap)))
+
     return amounts
 
 
 def _generate_fallback_narratives(diagnosis: dict, action_plan: dict, metrics: dict) -> dict:
-    """Generate template-based fallback narratives from metrics data."""
+    """Generate template-based fallback narratives from metrics data.
+
+    References revenue efficiency grades and gap decomposition levers
+    when available, falling back to vacancy-only metrics otherwise.
+    """
     narratives = {}
 
     # Metrics summary
@@ -224,14 +284,58 @@ def _generate_fallback_narratives(diagnosis: dict, action_plan: dict, metrics: d
     total_vacant = portfolio.get("total_vacant", 0)
     total_monthly = portfolio.get("total_monthly_vacancy_cost", 0)
 
+    # Compute total revenue gap across all unit types
+    total_gap = sum(
+        m.get("revenue_gap", {}).get("total_gap_monthly", 0)
+        for m in ut_metrics.values()
+    )
+
+    # Find worst grade
+    worst_grade = "OPTIMIZED"
+    worst_unit = ""
+    grade_order = {"CRISIS": 0, "DISTRESSED": 1, "IMBALANCED": 2, "OPPORTUNITY": 3, "OPTIMIZED": 4}
+    for code, m in ut_metrics.items():
+        g = m.get("revenue_efficiency", {}).get("grade", "OPTIMIZED")
+        if grade_order.get(g, 4) < grade_order.get(worst_grade, 4):
+            worst_grade = g
+            worst_unit = code
+
     # Slide 2
-    worst = portfolio.get("worst_performing_unit_type", "")
-    narratives["slide_2_headline"] = f"Your portfolio has {total_vacant} vacant units costing ${total_monthly:,.0f} per month in lost revenue."
-    narratives["slide_2_findings"] = [
-        f"{total_vacant} total vacant units across the portfolio",
-        f"${total_monthly:,.0f} monthly vacancy cost",
-        f"{worst} is the worst-performing unit type" if worst else "Review needed",
-    ]
+    if total_gap > 0:
+        narratives["slide_2_headline"] = (
+            f"Your portfolio has ${total_gap:,.0f} per month in capturable revenue "
+            f"with {worst_unit} rated {worst_grade}."
+        )
+    else:
+        narratives["slide_2_headline"] = (
+            f"Your portfolio has {total_vacant} vacant units costing "
+            f"${total_monthly:,.0f} per month in lost revenue."
+        )
+
+    # Build findings from top 3 unit types by gap
+    sorted_by_gap = sorted(
+        ut_metrics.items(),
+        key=lambda item: item[1].get("revenue_gap", {}).get("total_gap_monthly", 0),
+        reverse=True,
+    )
+    findings = []
+    for code, m in sorted_by_gap[:3]:
+        eff = m.get("revenue_efficiency", {})
+        gap = m.get("revenue_gap", {})
+        grade = eff.get("grade", "N/A")
+        gap_monthly = gap.get("total_gap_monthly", 0)
+        dominant = gap.get("dominant_lever", "FILL")
+        if gap_monthly > 0:
+            findings.append(f"{code} rated {grade}: ${gap_monthly:,.0f}/mo gap, dominant lever {dominant}")
+        else:
+            occ = m["occupancy_metrics"]["occupancy_rate"]
+            findings.append(f"{code} rated {grade}: {occ:.0%} occupancy")
+
+    # Pad to 3 if needed
+    while len(findings) < 3:
+        findings.append(f"${total_monthly:,.0f} monthly vacancy cost")
+
+    narratives["slide_2_findings"] = findings[:3]
 
     # Per-property narratives
     for prop_code, ut_codes in [("A", ["A1", "A2"]), ("B", ["B1", "B2"])]:
@@ -243,62 +347,98 @@ def _generate_fallback_narratives(diagnosis: dict, action_plan: dict, metrics: d
                 continue
             occ = m["occupancy_metrics"]["occupancy_rate"]
             vacant = m["occupancy_metrics"]["vacant"]
-            exp = m["exposure_metrics"]["total_exposure_pct"]
             asking = m["pricing_spreads"]["asking_rent"]
             comps = m["pricing_spreads"]["comps_rent"]
             diff = asking - comps
-            parts.append(
-                f"Your {code} units have {occ:.0%} occupancy with {vacant} vacant units "
-                f"and {exp:.0%} total exposure. Asking rent is ${asking:,.0f}, "
-                f"{'$' + str(abs(diff)) + ' above' if diff > 0 else '$' + str(abs(diff)) + ' below'} "
-                f"comp average of ${comps:,.0f}."
+            eff = m.get("revenue_efficiency", {})
+            grade = eff.get("grade", "N/A")
+            gap = m.get("revenue_gap", {})
+            dominant = gap.get("dominant_lever", "FILL")
+            gap_monthly = gap.get("total_gap_monthly", 0)
+
+            part = (
+                f"Your {code} units are rated {grade} at {occ:.0%} occupancy "
+                f"with {vacant} vacant. Asking ${asking:,.0f} is "
+                f"{'$' + str(abs(int(diff))) + ' above' if diff > 0 else '$' + str(abs(int(diff))) + ' below'} "
+                f"comps at ${comps:,.0f}."
             )
+            if gap_monthly > 0:
+                part += f" Revenue gap: ${gap_monthly:,.0f}/mo via {dominant}."
+            parts.append(part)
         narratives[slide_key] = " ".join(parts)
 
-    # Trend — build dynamically from occupancy rates
-    occ_parts = []
-    for code, m in ut_metrics.items():
-        occ = m["occupancy_metrics"]["occupancy_rate"]
-        occ_parts.append(f"{code} at {occ:.0%}")
-    occ_summary = ", ".join(occ_parts[:-1]) + f", and {occ_parts[-1]}" if len(occ_parts) > 1 else occ_parts[0] if occ_parts else ""
-    # Find the worst drop
-    worst_code = min(ut_metrics, key=lambda c: ut_metrics[c]["occupancy_metrics"]["occupancy_rate"]) if ut_metrics else ""
-    worst_occ = ut_metrics[worst_code]["occupancy_metrics"]["occupancy_rate"] if worst_code else 0
+    # Trend
     narratives["slide_6_narrative"] = (
-        f"Your occupancy trend tells a clear story: {occ_summary}. "
-        f"When occupancy falls as low as {worst_occ:.0%} on {worst_code} while asking rent stays flat, the market is sending a clear signal."
+        "Review the 4-month trend data to identify occupancy and pricing trajectories. "
+        "Rent roll momentum scores reflect whether each unit type is improving or deteriorating."
     )
 
-    # Revenue at risk
+    # Revenue gap breakdown
     total_daily = sum(m["revenue_metrics"]["daily_vacancy_burn"] for m in ut_metrics.values())
-    narratives["slide_7_narrative"] = (
-        f"Your portfolio is burning ${total_daily:,.0f} per day in vacancy costs, "
-        f"totaling ${total_monthly:,.0f} per month. Immediate action on the highest-burn unit types will reduce this exposure."
-    )
+    if total_gap > 0:
+        narratives["slide_7_narrative"] = (
+            f"Your portfolio has ${total_gap:,.0f} per month in total revenue gap "
+            f"with ${total_daily:,.0f} per day in vacancy burn alone. "
+            f"The gap breaks down across FILL, REPRICE, RENEW, and DE_CONCESSION levers."
+        )
+    else:
+        narratives["slide_7_narrative"] = (
+            f"Your portfolio is burning ${total_daily:,.0f} per day in vacancy costs, "
+            f"totaling ${total_monthly:,.0f} per month. "
+            f"Immediate action on the highest-burn unit types will reduce this exposure."
+        )
 
-    # Action plan slides
-    narratives["slide_8_narrative"] = (
-        f"This plan targets your ${total_daily:,.0f}/day portfolio burn with phased actions "
-        f"— immediate price cuts where confidence is high, controlled experiments where it's not, "
-        f"and a Day 15 decision point to lock winners."
-    )
-    narratives["slide_9_narrative"] = (
-        "Day 1: Cut asking rent on your worst-performing units and launch experiments on candidates "
-        "with enough vacancy to test. Every day of delay on critical actions costs real money."
-    )
+    # Action plan slides — adapt framing to worst grade
+    if worst_grade in ("CRISIS", "DISTRESSED"):
+        narratives["slide_8_narrative"] = (
+            "The 30-day plan prioritizes filling vacancies first, then optimizing pricing. "
+            "Phase 1 addresses the immediate bleed before moving to strategic positioning."
+        )
+        narratives["slide_9_narrative"] = (
+            "Phase 1 focuses on immediate fill actions: price reductions and concessions "
+            "for the most distressed unit types."
+        )
+    elif worst_grade == "IMBALANCED":
+        narratives["slide_8_narrative"] = (
+            "The 30-day plan targets quick pricing wins first, then uses experiments "
+            "and renewals to close the remaining gap."
+        )
+        narratives["slide_9_narrative"] = (
+            "Phase 1 launches repricing adjustments and price experiments "
+            "to rebalance underperforming unit types."
+        )
+    else:
+        narratives["slide_8_narrative"] = (
+            "The 30-day plan captures renewal revenue and tests upward pricing "
+            "while maintaining strong occupancy."
+        )
+        narratives["slide_9_narrative"] = (
+            "Phase 1 implements renewal increases and removes unnecessary concessions "
+            "where occupancy supports it."
+        )
+
     narratives["slide_10_narrative"] = (
-        "Day 15 is your decision point. If test units leased faster at the lower price, lock it in "
-        "across the board. If not, investigate non-price factors before cutting further."
+        "At Day 15, evaluate experiment results and renewal retention rates "
+        "to determine next steps for each unit type."
     )
 
     # Investigation
     narratives["slide_11_narrative"] = (
-        "Not every vacancy problem is a pricing problem. Units priced at comps that still aren't leasing "
-        "need investigation — unit condition, listing photos, tour conversion, and amenity competitiveness."
+        "Several areas require further investigation, particularly unit types "
+        "with low elasticity confidence where experimentation is needed."
     )
-    narratives["slide_12_summary"] = (
-        f"Your portfolio requires immediate attention on {total_vacant} vacant units. "
-        f"The 30-day plan targets a ${int(total_monthly * 0.3):,.0f} monthly savings through pricing adjustments and experiments."
-    )
+
+    if total_gap > 0:
+        narratives["slide_12_summary"] = (
+            f"Your portfolio has ${total_gap:,.0f} per month in capturable revenue. "
+            f"The 30-day plan activates FILL, REPRICE, RENEW, and DE_CONCESSION levers "
+            f"to close this gap systematically."
+        )
+    else:
+        narratives["slide_12_summary"] = (
+            f"Your portfolio requires immediate attention on {total_vacant} vacant units. "
+            f"The 30-day plan targets a ${int(total_monthly * 0.3):,.0f} monthly savings "
+            f"through pricing adjustments and experiments."
+        )
 
     return narratives

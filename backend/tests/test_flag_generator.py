@@ -1,7 +1,7 @@
 """Test flag generator — verify exact flag counts and types for all 4 unit types.
 
-Expected flag counts with default config:
-A1=3, A2=7, B1=12, B2=7
+Expected flag counts with default config after revenue optimization rebalance:
+A1=6, A2=7, B1=13, B2=7
 """
 from datetime import date
 
@@ -26,6 +26,7 @@ def _config_to_dict(config: ClientConfig) -> dict:
         "lease_term_policy": config.lease_term_policy or {},
         "experiment_policy": config.experiment_policy or {},
         "amenity_benchmarks": config.amenity_benchmarks or {},
+        "revenue_efficiency_zones": config.revenue_efficiency_zones or {},
     }
 
 
@@ -61,13 +62,24 @@ def all_flags(db):
 
 
 # ============================================================
-# A1: Exactly 3 flags
+# A1: Exactly 6 flags (was 3 pre-rebalance)
 # ============================================================
 
 class TestA1Flags:
     def test_flag_count(self, all_flags):
-        assert all_flags["A1"]["count"] == 3, \
+        assert all_flags["A1"]["count"] == 6, \
             f"A1 flags: {[f['type'] for f in all_flags['A1']['flags']]}"
+
+    def test_expected_flags(self, all_flags):
+        expected = {
+            "OCCUPANCY_PUSH_ELIGIBLE",
+            "DOM_ABOVE_THRESHOLD",
+            "EXECUTED_BELOW_ASKING",
+            "RENT_PUSH_OPPORTUNITY",
+            "HIGH_LTL_CAPTURE",
+            "ELASTICITY_WARNING",
+        }
+        assert all_flags["A1"]["flag_types"] == expected
 
     def test_occupancy_push_eligible(self, all_flags):
         assert "OCCUPANCY_PUSH_ELIGIBLE" in all_flags["A1"]["flag_types"]
@@ -78,14 +90,33 @@ class TestA1Flags:
     def test_executed_below_asking(self, all_flags):
         assert "EXECUTED_BELOW_ASKING" in all_flags["A1"]["flag_types"]
 
-    def test_no_high_or_critical(self, all_flags):
-        severities = {f["severity"] for f in all_flags["A1"]["flags"]}
-        assert "HIGH" not in severities
-        assert "CRITICAL" not in severities
-
-    def test_push_eligible_is_positive(self, all_flags):
+    def test_push_eligible_is_high(self, all_flags):
+        """Reclassified from POSITIVE to HIGH — revenue opportunity, not trivia."""
         push = [f for f in all_flags["A1"]["flags"] if f["type"] == "OCCUPANCY_PUSH_ELIGIBLE"]
-        assert push[0]["severity"] == "POSITIVE"
+        assert push[0]["severity"] == "HIGH"
+
+    def test_rent_push_opportunity(self, all_flags):
+        """A1 has optimal asking > current asking by >3% — should trigger."""
+        assert "RENT_PUSH_OPPORTUNITY" in all_flags["A1"]["flag_types"]
+        flag = [f for f in all_flags["A1"]["flags"] if f["type"] == "RENT_PUSH_OPPORTUNITY"][0]
+        assert flag["severity"] == "HIGH"
+
+    def test_high_ltl_capture(self, all_flags):
+        """A1 has 7.6% LTL and 96% occ — should trigger HIGH_LTL_CAPTURE."""
+        assert "HIGH_LTL_CAPTURE" in all_flags["A1"]["flag_types"]
+        flag = [f for f in all_flags["A1"]["flags"] if f["type"] == "HIGH_LTL_CAPTURE"][0]
+        assert flag["severity"] == "HIGH"
+        assert flag["value"] == 7.6
+
+    def test_elasticity_warning(self, all_flags):
+        """A1 elasticity is ELASTIC with HIGH confidence."""
+        assert "ELASTICITY_WARNING" in all_flags["A1"]["flag_types"]
+        flag = [f for f in all_flags["A1"]["flags"] if f["type"] == "ELASTICITY_WARNING"][0]
+        assert flag["severity"] == "INFO"
+
+    def test_no_renewal_increase_eligible(self, all_flags):
+        """A1 has 0 upcoming renewals — should NOT trigger."""
+        assert "RENEWAL_INCREASE_ELIGIBLE" not in all_flags["A1"]["flag_types"]
 
     def test_mab_not_eligible(self, all_flags):
         """A1 has only 2 vacant — below min 3 for experiments."""
@@ -93,7 +124,7 @@ class TestA1Flags:
 
 
 # ============================================================
-# A2: Exactly 7 flags
+# A2: Exactly 7 flags (was 7 pre-rebalance, composition changed)
 # ============================================================
 
 class TestA2Flags:
@@ -108,7 +139,7 @@ class TestA2Flags:
             "CONCESSION_TRIGGER",
             "HIGH_REVENUE_AT_RISK",
             "DOM_ABOVE_THRESHOLD",
-            "RENEWAL_FREEZE_RECOMMENDED",
+            "ELASTICITY_WARNING",
             "MAB_ELIGIBLE",
         }
         assert all_flags["A2"]["flag_types"] == expected
@@ -117,14 +148,26 @@ class TestA2Flags:
         severities = {f["severity"] for f in all_flags["A2"]["flags"]}
         assert "CRITICAL" not in severities
 
+    def test_no_renewal_freeze(self, all_flags):
+        """Reclassified: threshold now 0.82 (from config), A2 at 0.86 no longer triggers."""
+        assert "RENEWAL_FREEZE_RECOMMENDED" not in all_flags["A2"]["flag_types"]
+
+    def test_no_high_ltl_capture(self, all_flags):
+        """A2 LTL=8.2% but occ=0.86 < 0.88 gate — should NOT trigger."""
+        assert "HIGH_LTL_CAPTURE" not in all_flags["A2"]["flag_types"]
+
+    def test_elasticity_warning_present(self, all_flags):
+        """A2 elasticity is ELASTIC with HIGH confidence — should trigger."""
+        assert "ELASTICITY_WARNING" in all_flags["A2"]["flag_types"]
+
 
 # ============================================================
-# B1: Exactly 12 flags
+# B1: Exactly 13 flags (was 12 pre-rebalance)
 # ============================================================
 
 class TestB1Flags:
     def test_flag_count(self, all_flags):
-        assert all_flags["B1"]["count"] == 12, \
+        assert all_flags["B1"]["count"] == 13, \
             f"B1 flags: {[f['type'] for f in all_flags['B1']['flags']]}"
 
     def test_two_critical(self, all_flags):
@@ -148,6 +191,7 @@ class TestB1Flags:
             "DOM_ABOVE_THRESHOLD",
             "AMENITY_AUDIT_RECOMMENDED",
             "RENEWAL_FREEZE_RECOMMENDED",
+            "ELASTICITY_WARNING",
             "MAB_ELIGIBLE",
         }
         assert all_flags["B1"]["flag_types"] == expected
@@ -163,12 +207,27 @@ class TestB1Flags:
         assert flag[0]["value"] == 130
 
     def test_demand_divergence_not_present(self, all_flags):
-        """B1 demand=0.75, occ=0.79 → gap=-0.04. Should NOT fire."""
+        """B1 demand=0.75, occ=0.79 -> gap=-0.04. Should NOT fire."""
         assert "DEMAND_OCCUPANCY_DIVERGENCE" not in all_flags["B1"]["flag_types"]
+
+    def test_no_revenue_capture_flags(self, all_flags):
+        """B1 occ too low for revenue-capture new flags."""
+        for flag_type in ("RENT_PUSH_OPPORTUNITY", "HIGH_LTL_CAPTURE",
+                          "RENEWAL_INCREASE_ELIGIBLE", "UNDERPRICED_VS_COMPS",
+                          "CONCESSION_REMOVAL_ELIGIBLE"):
+            assert flag_type not in all_flags["B1"]["flag_types"]
+
+    def test_renewal_freeze_still_fires(self, all_flags):
+        """B1 occ=0.79 < 0.82 freeze threshold — still fires."""
+        assert "RENEWAL_FREEZE_RECOMMENDED" in all_flags["B1"]["flag_types"]
+
+    def test_elasticity_warning(self, all_flags):
+        """B1 elasticity is ELASTIC with HIGH confidence."""
+        assert "ELASTICITY_WARNING" in all_flags["B1"]["flag_types"]
 
 
 # ============================================================
-# B2: Exactly 7 flags
+# B2: Exactly 7 flags (unchanged count)
 # ============================================================
 
 class TestB2Flags:
@@ -199,6 +258,18 @@ class TestB2Flags:
 
     def test_exposure_not_deteriorating(self, all_flags):
         assert "EXPOSURE_DETERIORATING" not in all_flags["B2"]["flag_types"]
+
+    def test_no_high_ltl_capture(self, all_flags):
+        """B2 LTL=2.9% which is < 5% threshold — should NOT trigger."""
+        assert "HIGH_LTL_CAPTURE" not in all_flags["B2"]["flag_types"]
+
+    def test_no_renewal_increase_eligible(self, all_flags):
+        """B2 occ=0.88 < 0.90 gate — should NOT trigger."""
+        assert "RENEWAL_INCREASE_ELIGIBLE" not in all_flags["B2"]["flag_types"]
+
+    def test_no_elasticity_warning(self, all_flags):
+        """B2 elasticity direction is UNKNOWN — should NOT trigger."""
+        assert "ELASTICITY_WARNING" not in all_flags["B2"]["flag_types"]
 
 
 # ============================================================
@@ -269,13 +340,74 @@ class TestConfigSensitivity:
         va_types = {f["type"] for f in va_flags}
         default_types = all_flags["B1"]["flag_types"]
 
-        # With crisis_below=0.72: B1 occ=0.79 is NOT below 0.72 → no OCCUPANCY_CRISIS
+        # With crisis_below=0.72: B1 occ=0.79 is NOT below 0.72 -> no OCCUPANCY_CRISIS
         assert "OCCUPANCY_CRISIS" not in va_types
         # Instead should be OCCUPANCY_BELOW_ACTION (0.79 < 0.80)
         assert "OCCUPANCY_BELOW_ACTION" in va_types
 
-        # With exposure crisis_above=0.25: B1 exp=0.25 is >= 0.25 → EXPOSURE_CRISIS still fires
+        # With exposure crisis_above=0.25: B1 exp=0.25 is >= 0.25 -> EXPOSURE_CRISIS still fires
         assert "EXPOSURE_CRISIS" in va_types
 
-        # Different flag types than default (OCCUPANCY_CRISIS → OCCUPANCY_BELOW_ACTION)
+        # Different flag types than default (OCCUPANCY_CRISIS -> OCCUPANCY_BELOW_ACTION)
         assert va_types != default_types
+
+
+# ============================================================
+# New flag-specific tests
+# ============================================================
+
+class TestReclassifications:
+    def test_occupancy_push_is_high_not_positive(self, all_flags):
+        """Reclassification #1: OCCUPANCY_PUSH_ELIGIBLE severity changed to HIGH."""
+        push = [f for f in all_flags["A1"]["flags"] if f["type"] == "OCCUPANCY_PUSH_ELIGIBLE"]
+        assert len(push) == 1
+        assert push[0]["severity"] == "HIGH"
+
+    def test_renewal_freeze_uses_config_threshold(self, all_flags):
+        """Reclassification #2: RENEWAL_FREEZE now reads freeze_below_occupancy from config.
+
+        Default is 0.82. A2 at 0.86 should NOT trigger. B1 at 0.79 still triggers.
+        """
+        assert "RENEWAL_FREEZE_RECOMMENDED" not in all_flags["A2"]["flag_types"]
+        assert "RENEWAL_FREEZE_RECOMMENDED" in all_flags["B1"]["flag_types"]
+        b1_freeze = [f for f in all_flags["B1"]["flags"]
+                     if f["type"] == "RENEWAL_FREEZE_RECOMMENDED"][0]
+        assert b1_freeze["threshold"] == 0.82
+
+    def test_concession_trigger_fires_normally_at_low_occ(self, all_flags):
+        """Reclassification #3: CONCESSION_TRIGGER still fires when occ < removal threshold."""
+        # A2 (occ=0.86) and B1 (occ=0.79) should still get CONCESSION_TRIGGER
+        assert "CONCESSION_TRIGGER" in all_flags["A2"]["flag_types"]
+        assert "CONCESSION_TRIGGER" in all_flags["B1"]["flag_types"]
+
+
+class TestNewFlagGating:
+    """Verify that new flags respect their occupancy gates."""
+
+    def test_rent_push_requires_high_occ(self, all_flags):
+        """RENT_PUSH_OPPORTUNITY requires occ >= 0.94."""
+        # A1 (0.96) has it, A2/B1/B2 do not
+        assert "RENT_PUSH_OPPORTUNITY" in all_flags["A1"]["flag_types"]
+        assert "RENT_PUSH_OPPORTUNITY" not in all_flags["A2"]["flag_types"]
+        assert "RENT_PUSH_OPPORTUNITY" not in all_flags["B1"]["flag_types"]
+        assert "RENT_PUSH_OPPORTUNITY" not in all_flags["B2"]["flag_types"]
+
+    def test_high_ltl_capture_requires_occ_and_ltl(self, all_flags):
+        """HIGH_LTL_CAPTURE requires LTL > 5% and occ >= 0.88."""
+        # A1 (7.6% LTL, 0.96 occ) has it
+        assert "HIGH_LTL_CAPTURE" in all_flags["A1"]["flag_types"]
+        # A2 (8.2% LTL, 0.86 occ) blocked by occ gate
+        assert "HIGH_LTL_CAPTURE" not in all_flags["A2"]["flag_types"]
+        # B1 (negative LTL) blocked by LTL gate
+        assert "HIGH_LTL_CAPTURE" not in all_flags["B1"]["flag_types"]
+        # B2 (2.9% LTL) blocked by LTL threshold
+        assert "HIGH_LTL_CAPTURE" not in all_flags["B2"]["flag_types"]
+
+    def test_elasticity_warning_requires_elastic_and_confidence(self, all_flags):
+        """ELASTICITY_WARNING requires direction=ELASTIC and confidence >= MEDIUM."""
+        # A1, A2, B1 all have ELASTIC + HIGH
+        assert "ELASTICITY_WARNING" in all_flags["A1"]["flag_types"]
+        assert "ELASTICITY_WARNING" in all_flags["A2"]["flag_types"]
+        assert "ELASTICITY_WARNING" in all_flags["B1"]["flag_types"]
+        # B2 direction is UNKNOWN
+        assert "ELASTICITY_WARNING" not in all_flags["B2"]["flag_types"]
