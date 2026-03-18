@@ -177,12 +177,23 @@ def run_portfolio_diagnostic(
             raise ValueError("No properties with active configs found")
 
         # Step 2: Aggregate across properties
-        portfolio_metrics = aggregate_cross_property(all_property_data)
+        # Convert list format to dict format expected by aggregate_cross_property
+        property_metrics_dict = {}
+        for entry in all_property_data:
+            m = entry["metrics"]
+            prop_name = m.get("property_name", f"Property_{len(property_metrics_dict)}")
+            property_metrics_dict[prop_name] = m
+        portfolio_metrics = aggregate_cross_property(property_metrics_dict)
         run.metrics_compute_ms = int((time.perf_counter() - metrics_start) * 1000)
         run.metrics_json = portfolio_metrics
 
         # Flatten flags for storage
-        run.flags_json = portfolio_metrics["all_flags"]
+        all_flags = {}
+        for entry in all_property_data:
+            m = entry["metrics"]
+            prop_name = m.get("property_name", "Unknown")
+            all_flags[prop_name] = entry["flags"]
+        run.flags_json = all_flags
         db.flush()
 
         # Step 3: Claude diagnosis
