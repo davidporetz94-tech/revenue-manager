@@ -132,3 +132,123 @@ def compute_portfolio_metrics(unit_type_metrics: list[dict]) -> dict:
         "worst_performing_unit_type": worst,
         "best_performing_unit_type": best,
     }
+
+
+def aggregate_cross_property(
+    property_metrics: dict[str, dict],
+) -> dict:
+    """Aggregate metrics across multiple properties for portfolio-level reporting.
+
+    Args:
+        property_metrics: dict mapping property name/code to its
+            compute_property_metrics() output.
+
+    Returns:
+        Dict with 'properties' detail, 'aggregate' totals, and 'property_ranking'.
+    """
+    properties = {}
+    total_revenue_gap = 0.0
+    total_optimal_revenue = 0.0
+    total_current_revenue = 0.0
+    total_renewal_opportunity = 0.0
+    total_units = 0
+    total_vacant = 0
+    total_vacancy_cost = 0.0
+
+    for prop_key, prop_data in property_metrics.items():
+        ut_metrics = prop_data.get("unit_type_metrics", {})
+        pm = prop_data.get("portfolio_metrics", {})
+
+        prop_units = pm.get("total_units", 0)
+        prop_vacant = pm.get("total_vacant", 0)
+        prop_vacancy_cost = pm.get("total_monthly_vacancy_cost", 0)
+
+        total_units += prop_units
+        total_vacant += prop_vacant
+        total_vacancy_cost += prop_vacancy_cost
+
+        # Aggregate revenue fields from each unit type
+        prop_gap = 0.0
+        prop_optimal = 0.0
+        prop_current = 0.0
+        prop_renewal = 0.0
+
+        for _code, m in ut_metrics.items():
+            gap = m.get("revenue_gap", {})
+            prop_gap += gap.get("total_gap_monthly", 0)
+
+            opt = m.get("optimal_pricing", {})
+            prop_optimal += opt.get("optimal_revenue_monthly", 0)
+            prop_current += opt.get("current_revenue_monthly", 0)
+
+            renewal = m.get("renewal_opportunity", {})
+            prop_renewal += renewal.get("net_annual_capture", 0)
+
+        # Per-property revenue efficiency
+        prop_rev_efficiency = (
+            round_half_up(safe_divide(prop_current, prop_optimal) * 100, 1)
+            if prop_optimal > 0 else 0.0
+        )
+
+        total_revenue_gap += prop_gap
+        total_optimal_revenue += prop_optimal
+        total_current_revenue += prop_current
+        total_renewal_opportunity += prop_renewal
+
+        properties[prop_key] = {
+            "property_name": prop_data.get("property_name", prop_key),
+            "property_id": prop_data.get("property_id", ""),
+            "total_units": prop_units,
+            "total_vacant": prop_vacant,
+            "total_monthly_vacancy_cost": prop_vacancy_cost,
+            "revenue_gap": prop_gap,
+            "revenue_efficiency": prop_rev_efficiency,
+            "renewal_opportunity": prop_renewal,
+            "unit_type_metrics": ut_metrics,
+            "portfolio_metrics": pm,
+        }
+
+    # Portfolio-level aggregate
+    portfolio_rev_efficiency = (
+        round_half_up(safe_divide(total_current_revenue, total_optimal_revenue) * 100, 1)
+        if total_optimal_revenue > 0 else 0.0
+    )
+
+    blended_occ = round_half_up(
+        safe_divide(total_units - total_vacant, total_units), 4,
+    )
+
+    aggregate = {
+        "total_units": total_units,
+        "total_vacant": total_vacant,
+        "blended_occupancy": blended_occ,
+        "total_monthly_vacancy_cost": total_vacancy_cost,
+        "total_revenue_gap": total_revenue_gap,
+        "total_optimal_revenue": total_optimal_revenue,
+        "total_current_revenue": total_current_revenue,
+        "portfolio_revenue_efficiency": portfolio_rev_efficiency,
+        "total_renewal_opportunity": total_renewal_opportunity,
+    }
+
+    # Property ranking: by revenue efficiency ascending (worst first)
+    property_ranking = sorted(
+        [
+            {
+                "property_key": pk,
+                "property_name": pv["property_name"],
+                "revenue_efficiency": pv["revenue_efficiency"],
+                "revenue_gap": pv["revenue_gap"],
+                "total_vacant": pv["total_vacant"],
+                "total_units": pv["total_units"],
+                "vacancy_cost": pv["total_monthly_vacancy_cost"],
+            }
+            for pk, pv in properties.items()
+        ],
+        key=lambda x: x["revenue_efficiency"],
+    )
+
+    return {
+        "properties": properties,
+        "aggregate": aggregate,
+        "property_ranking": property_ranking,
+    }
