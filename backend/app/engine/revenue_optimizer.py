@@ -1,4 +1,4 @@
-"""Revenue optimizer engine — implied elasticity and optimal price computation.
+"""Revenue optimizer engine — elasticity, optimal price, gap decomposition, efficiency scoring.
 
 Pure functions — no database access, no imports from services or models.
 Only standard library + math.
@@ -509,6 +509,335 @@ def _determine_confidence(
 
     reverse = {0: "LOW", 1: "MEDIUM", 2: "HIGH"}
     return reverse[base]
+
+
+# ============================================================
+# decompose_revenue_gap
+# ============================================================
+
+def decompose_revenue_gap(
+    unit_type_metrics: dict,
+    optimal: dict,
+    renewal_analysis: dict,
+    concession_data: dict,
+) -> dict:
+    """Break total revenue gap into 5 actionable lever components.
+
+    Each component identifies a specific lever (FILL, REPRICE, RENEW,
+    DE_CONCESSION) and the monthly dollar amount addressable through that lever.
+
+    Args:
+        unit_type_metrics: Dict with occupancy_metrics, pricing_spreads, ltl_analysis.
+        optimal: Output from compute_optimal_price.
+        renewal_analysis: Dict with upcoming_renewals_90d, net_monthly_capture.
+        concession_data: Dict with total_concession_drag_monthly.
+
+    Returns:
+        Dict with current/optimal revenue, total gap, gap_components,
+        dominant_lever, and lever_ranking.
+    """
+    occ_metrics = unit_type_metrics.get("occupancy_metrics", {})
+    pricing = unit_type_metrics.get("pricing_spreads", {})
+    ltl = unit_type_metrics.get("ltl_analysis", {})
+
+    occupied = occ_metrics.get("occupied", 0)
+    vacant = occ_metrics.get("vacant", 0)
+    current_asking = pricing.get("asking_rent", 0)
+    in_place_rent = pricing.get("in_place_rent", 0)
+    ltl_dollars = ltl.get("ltl_dollars", 0)
+
+    optimal_asking = optimal.get("optimal_asking", current_asking)
+
+    # Current monthly revenue: in-place rent x occupied units
+    current_monthly_revenue = _round_half_up(in_place_rent * occupied, 2)
+
+    # Optimal monthly revenue from optimizer output
+    optimal_monthly_revenue = optimal.get("optimal_revenue_monthly", current_monthly_revenue)
+
+    total_gap = _round_half_up(optimal_monthly_revenue - current_monthly_revenue, 2)
+
+    # Component calculations
+    vacancy_cost = _round_half_up(vacant * current_asking, 2)
+    new_lease_underpricing = _round_half_up(
+        max(0.0, optimal_asking - current_asking) * vacant, 2,
+    )
+    in_place_underpricing = _round_half_up(
+        max(0.0, ltl_dollars) * occupied, 2,
+    )
+    renewal_opportunity = _round_half_up(
+        renewal_analysis.get("net_monthly_capture", 0.0), 2,
+    )
+    concession_drag = _round_half_up(
+        concession_data.get("total_concession_drag_monthly", 0.0), 2,
+    )
+
+    gap_components = {
+        "vacancy_cost": {
+            "amount": vacancy_cost,
+            "lever": "FILL",
+            "description": "Revenue lost to empty units",
+        },
+        "new_lease_underpricing": {
+            "amount": new_lease_underpricing,
+            "lever": "REPRICE",
+            "description": "Revenue lost from asking below optimal on new leases",
+        },
+        "in_place_underpricing": {
+            "amount": in_place_underpricing,
+            "lever": "RENEW",
+            "description": "Revenue gap in current leases, addressable at renewal",
+        },
+        "renewal_opportunity": {
+            "amount": renewal_opportunity,
+            "lever": "RENEW",
+            "description": "Capturable through upcoming renewal increases",
+        },
+        "concession_drag": {
+            "amount": concession_drag,
+            "lever": "DE_CONCESSION",
+            "description": "Revenue reduction from active concessions",
+        },
+    }
+
+    # Rank components by amount descending
+    lever_ranking = sorted(
+        gap_components.keys(),
+        key=lambda k: gap_components[k]["amount"],
+        reverse=True,
+    )
+
+    # Dominant lever is the lever of the largest component
+    dominant_lever = gap_components[lever_ranking[0]]["lever"]
+
+    return {
+        "current_monthly_revenue": current_monthly_revenue,
+        "optimal_monthly_revenue": optimal_monthly_revenue,
+        "total_gap_monthly": total_gap,
+        "gap_components": gap_components,
+        "dominant_lever": dominant_lever,
+        "lever_ranking": lever_ranking,
+    }
+
+
+# ============================================================
+# compute_revenue_efficiency
+# ============================================================
+
+def compute_revenue_efficiency(
+    unit_type_metrics: dict,
+    optimal: dict,
+    snapshot_trends: list[dict],
+    seasonal_context: dict,
+    zone_config: dict | None = None,
+) -> dict:
+    """Compute a unified revenue efficiency score (0-100) with 3 dimensions.
+
+    Replaces flag-count-based health scoring with a continuous, dynamically-
+    weighted composite score. The three dimensions are occupancy health,
+    pricing alignment, and rent roll momentum. Weights shift based on
+    occupancy zone and seasonal context.
+
+    Args:
+        unit_type_metrics: Dict with occupancy_metrics, pricing_spreads.
+        optimal: Output from compute_optimal_price.
+        snapshot_trends: Monthly snapshots for trend analysis.
+        seasonal_context: Dict with season, seasonal_factor, months_to_peak.
+        zone_config: Optional zone boundary and weight config.
+
+    Returns:
+        Dict with revenue_efficiency_score, grade, dimensions,
+        dynamic_weights_reason, occupancy_zone.
+    """
+    config = {
+        "crisis_below": 0.82,
+        "stressed_below": 0.89,
+        "balanced_below": 0.94,
+        "strong_below": 0.97,
+        "crisis_weights": [0.60, 0.15, 0.25],
+        "stressed_weights": [0.45, 0.30, 0.25],
+        "balanced_weights": [0.30, 0.35, 0.35],
+        "strong_weights": [0.15, 0.45, 0.40],
+        "full_weights": [0.10, 0.50, 0.40],
+        "seasonal_weight_shift": 0.05,
+    }
+    if zone_config:
+        config.update(zone_config)
+
+    occ_metrics = unit_type_metrics.get("occupancy_metrics", {})
+    pricing = unit_type_metrics.get("pricing_spreads", {})
+
+    actual_occ = occ_metrics.get("occupancy_rate", occ_metrics.get("avg_occupancy", 0.0))
+    current_asking = pricing.get("asking_rent", 0)
+    optimal_asking = optimal.get("optimal_asking", current_asking)
+
+    seasonal_factor = seasonal_context.get("seasonal_factor", 1.0)
+    months_to_peak = seasonal_context.get("months_to_peak", 6)
+
+    # --- Determine occupancy zone ---
+    zone, base_weights = _determine_zone_and_weights(actual_occ, config)
+
+    # --- Apply seasonal weight shift ---
+    occ_w, pricing_w, momentum_w = base_weights
+    shift = config.get("seasonal_weight_shift", 0.05)
+    weight_reason_parts = [f"zone={zone}"]
+
+    if months_to_peak <= 3:
+        # Approaching peak: shift from occ to pricing
+        occ_w -= shift
+        pricing_w += shift
+        weight_reason_parts.append(f"spring shift: +{shift:.0%} pricing, -{shift:.0%} occ")
+    elif months_to_peak >= 9:
+        # Off-peak: shift from pricing to occ
+        pricing_w -= shift
+        occ_w += shift
+        weight_reason_parts.append(f"off-peak shift: +{shift:.0%} occ, -{shift:.0%} pricing")
+    else:
+        weight_reason_parts.append("no seasonal shift")
+
+    # --- Dimension 1: Occupancy Health ---
+    target_occ = 0.95 * seasonal_factor
+    occ_score = max(0, min(100, int(_round_half_up(100 - (target_occ - actual_occ) * 500))))
+
+    # --- Dimension 2: Pricing Alignment ---
+    if optimal_asking > 0:
+        price_gap_pct = abs(current_asking - optimal_asking) / optimal_asking
+    else:
+        price_gap_pct = 0.0
+    pricing_score = max(0, min(100, int(_round_half_up(100 - price_gap_pct * 1000))))
+
+    # --- Dimension 3: Rent Roll Momentum ---
+    momentum_score = _compute_momentum_score(
+        snapshot_trends, current_asking, optimal_asking,
+    )
+
+    # --- Composite score ---
+    composite = (
+        occ_score * occ_w
+        + pricing_score * pricing_w
+        + momentum_score * momentum_w
+    )
+    final_score = max(0, min(100, int(_round_half_up(composite))))
+
+    # --- Grade mapping ---
+    grade = _score_to_grade(final_score)
+
+    return {
+        "revenue_efficiency_score": final_score,
+        "grade": grade,
+        "dimensions": {
+            "occupancy_health": {"score": occ_score, "weight": _round_half_up(occ_w, 2)},
+            "pricing_alignment": {"score": pricing_score, "weight": _round_half_up(pricing_w, 2)},
+            "rent_roll_momentum": {"score": momentum_score, "weight": _round_half_up(momentum_w, 2)},
+        },
+        "dynamic_weights_reason": "; ".join(weight_reason_parts),
+        "occupancy_zone": zone,
+    }
+
+
+# ============================================================
+# Internal Helpers
+# ============================================================
+
+def _determine_zone_and_weights(
+    occupancy: float,
+    config: dict,
+) -> tuple[str, list[float]]:
+    """Determine occupancy zone and base dynamic weights.
+
+    Args:
+        occupancy: Current occupancy rate.
+        config: Zone config with boundaries and weight arrays.
+
+    Returns:
+        Tuple of (zone_name, [occ_weight, pricing_weight, momentum_weight]).
+    """
+    crisis = config.get("crisis_below", 0.82)
+    stressed = config.get("stressed_below", 0.89)
+    balanced = config.get("balanced_below", 0.94)
+    strong = config.get("strong_below", 0.97)
+
+    if occupancy < crisis:
+        return "CRISIS", list(config.get("crisis_weights", [0.60, 0.15, 0.25]))
+    elif occupancy < stressed:
+        return "STRESSED", list(config.get("stressed_weights", [0.45, 0.30, 0.25]))
+    elif occupancy < balanced:
+        return "BALANCED", list(config.get("balanced_weights", [0.30, 0.35, 0.35]))
+    elif occupancy < strong:
+        return "STRONG", list(config.get("strong_weights", [0.15, 0.45, 0.40]))
+    else:
+        return "FULL", list(config.get("full_weights", [0.10, 0.50, 0.40]))
+
+
+def _compute_momentum_score(
+    snapshot_trends: list[dict],
+    current_asking: float,
+    optimal_asking: float,
+) -> int:
+    """Compute rent roll momentum score (0-100) from snapshot trends.
+
+    Uses first-to-last comparison of occupancy and asking rent over the
+    trend window. Baseline is 50, adjusted up/down based on trend direction.
+
+    Args:
+        snapshot_trends: Monthly snapshots with occupancy and asking rent.
+        current_asking: Current asking rent.
+        optimal_asking: Optimal asking rent from optimizer.
+
+    Returns:
+        Integer score 0-100.
+    """
+    if len(snapshot_trends) < 2:
+        return 50  # baseline when no trend data
+
+    first = snapshot_trends[0]
+    last = snapshot_trends[-1]
+
+    first_occ = _get_occupancy(first)
+    last_occ = _get_occupancy(last)
+    first_rent = _get_asking_rent(first)
+    last_rent = _get_asking_rent(last)
+
+    score = 50.0  # baseline
+
+    # Occupancy trend: +20 per +1% improvement, -20 per -1% decline
+    occ_change = last_occ - first_occ
+    occ_bonus = occ_change * 2000  # 0.01 change = +/- 20 points
+    score += occ_bonus
+
+    # Rent trend: only reward increases when NOT overpriced
+    is_overpriced = current_asking > optimal_asking * 1.02  # 2% tolerance
+    if first_rent > 0:
+        rent_pct_change = (last_rent - first_rent) / first_rent
+        if is_overpriced:
+            # When overpriced, rent increases are bad (pushing further from optimal)
+            rent_bonus = -rent_pct_change * 500  # penalize increases
+        else:
+            # When underpriced or aligned, rent increases are good
+            rent_bonus = rent_pct_change * 500  # 1% = +5 points
+        score += rent_bonus
+
+    return max(0, min(100, int(_round_half_up(score))))
+
+
+def _score_to_grade(score: int) -> str:
+    """Map a numeric efficiency score (0-100) to a grade label.
+
+    Args:
+        score: Integer score 0-100.
+
+    Returns:
+        Grade string: OPTIMIZED|OPPORTUNITY|IMBALANCED|DISTRESSED|CRISIS.
+    """
+    if score >= 85:
+        return "OPTIMIZED"
+    elif score >= 70:
+        return "OPPORTUNITY"
+    elif score >= 55:
+        return "IMBALANCED"
+    elif score >= 40:
+        return "DISTRESSED"
+    else:
+        return "CRISIS"
 
 
 def _empty_result(current_revenue: float) -> dict:
