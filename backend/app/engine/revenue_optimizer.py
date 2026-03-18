@@ -7,6 +7,20 @@ import math
 
 
 # ============================================================
+# Rounding Helper (round-half-up, not Python banker's rounding)
+# ============================================================
+
+def _round_half_up(x: float, decimals: int = 0) -> float:
+    """Round using round-half-up convention for monetary calculations.
+
+    Python's built-in round() uses banker's rounding (round-half-to-even),
+    which can produce incorrect results for monetary values.
+    """
+    multiplier = 10 ** decimals
+    return math.floor(x * multiplier + 0.5) / multiplier
+
+
+# ============================================================
 # Default Zone Configuration
 # ============================================================
 
@@ -67,6 +81,7 @@ def compute_implied_elasticity(
             "confidence": "LOW",
             "data_points": n,
             "direction": "UNKNOWN",
+            "comp_corroborated": False,
             "notes": "Insufficient data points for elasticity estimation" if n == 0
                      else "Only one data point — cannot compute month-over-month changes",
         }
@@ -94,6 +109,7 @@ def compute_implied_elasticity(
             "confidence": "LOW",
             "data_points": n,
             "direction": "UNKNOWN",
+            "comp_corroborated": False,
             "notes": "Could not compute rent changes — zero or missing rent data",
         }
 
@@ -108,6 +124,7 @@ def compute_implied_elasticity(
             "confidence": "LOW",
             "data_points": n,
             "direction": "INELASTIC" if abs(avg_occ_change) < 0.01 else "UNKNOWN",
+            "comp_corroborated": False,
             "notes": f"Asking rent barely changed (avg {avg_rent_pct_change:.3f}% per month) — insufficient signal",
         }
 
@@ -127,6 +144,7 @@ def compute_implied_elasticity(
             "confidence": "LOW",
             "data_points": n,
             "direction": "UNKNOWN",
+            "comp_corroborated": False,
             "notes": "Rent changes too small to compute reliable elasticity pairs",
         }
 
@@ -172,7 +190,42 @@ def compute_implied_elasticity(
     else:
         confidence = "LOW"
 
-    notes_parts = []
+    # Comp corroboration: if comp rents moved in the same direction as asking
+    # rents, that corroborates the signal and can bump confidence one level.
+    notes_parts: list[str] = []
+    comp_corroborated = False
+
+    if comp_trends and len(comp_trends) >= 2:
+        comp_rent_changes: list[float] = []
+        for i in range(1, len(comp_trends)):
+            prev_comp = _get_asking_rent(comp_trends[i - 1])
+            curr_comp = _get_asking_rent(comp_trends[i])
+            if prev_comp > 0:
+                comp_rent_changes.append((curr_comp - prev_comp) / prev_comp * 100)
+
+        if comp_rent_changes:
+            avg_comp_direction = sum(comp_rent_changes) / len(comp_rent_changes)
+            # Same direction = both positive or both negative
+            same_direction = (avg_rent_direction > 0.05 and avg_comp_direction > 0.05) or \
+                             (avg_rent_direction < -0.05 and avg_comp_direction < -0.05)
+
+            if same_direction:
+                comp_corroborated = True
+                # Bump confidence one level
+                levels_map = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "HIGH": "HIGH"}
+                confidence = levels_map[confidence]
+                notes_parts.append(
+                    f"comp corroboration: comps moved {avg_comp_direction:+.2f}%/mo "
+                    f"(same direction as asking {avg_rent_direction:+.2f}%/mo) — confidence boosted"
+                )
+            else:
+                notes_parts.append(
+                    f"comp divergence: comps moved {avg_comp_direction:+.2f}%/mo "
+                    f"vs asking {avg_rent_direction:+.2f}%/mo"
+                )
+    else:
+        notes_parts.append("no comp trend data available for corroboration")
+
     notes_parts.append(f"Based on {len(elasticity_pairs)} month-over-month observation(s)")
     notes_parts.append(f"avg rent change: {avg_rent_direction:+.2f}%/mo")
     notes_parts.append(f"avg occ change: {avg_occ_change:+.4f}/mo")
@@ -180,10 +233,11 @@ def compute_implied_elasticity(
         notes_parts.append("direction inconsistent across periods")
 
     return {
-        "elasticity_coefficient": round(abs(avg_elasticity), 4),
+        "elasticity_coefficient": _round_half_up(abs(avg_elasticity), 4),
         "confidence": confidence,
         "data_points": n,
         "direction": direction,
+        "comp_corroborated": comp_corroborated,
         "notes": "; ".join(notes_parts),
     }
 
@@ -294,17 +348,22 @@ def compute_optimal_price(
         best_revenue = best_price * total_units * constrained_occ
 
     # Apply seasonal adjustment
-    seasonal_adjustment = _compute_seasonal_adjustment(seasonal_context)
-    best_price = best_price * (1 + seasonal_adjustment / 100)
+    seasonal_adjustment_pct = _compute_seasonal_adjustment(seasonal_context)
+    price_before_seasonal = best_price
+    best_price = best_price * (1 + seasonal_adjustment_pct / 100)
+    seasonal_adjustment_dollars = _round_half_up(best_price - price_before_seasonal, 2)
 
     # Re-apply comp constraint after seasonal adjustment
     if comps_rent > 0:
         if best_price > comp_ceiling:
             best_price = comp_ceiling
             comp_constrained = True
+            # Recalculate seasonal dollars if comp-capped
+            seasonal_adjustment_dollars = _round_half_up(best_price - price_before_seasonal, 2)
         elif best_price < comp_floor:
             best_price = comp_floor
             comp_constrained = True
+            seasonal_adjustment_dollars = _round_half_up(best_price - price_before_seasonal, 2)
 
     # Recalculate final revenue at adjusted price
     pct_from_current = (best_price - current_asking) / current_asking * 100 if current_asking > 0 else 0
@@ -313,12 +372,12 @@ def compute_optimal_price(
     optimal_revenue = best_price * total_units * final_occ
 
     # Round to nearest dollar
-    optimal_asking = round(best_price, 2)
-    optimal_revenue_monthly = round(optimal_revenue, 2)
-    revenue_gap = round(optimal_revenue - current_revenue, 2)
+    optimal_asking = _round_half_up(best_price, 2)
+    optimal_revenue_monthly = _round_half_up(optimal_revenue, 2)
+    revenue_gap = _round_half_up(optimal_revenue - current_revenue, 2)
 
     # Conservative recommendation: halfway between current and optimal
-    recommended_asking = round((current_asking + optimal_asking) / 2, 2)
+    recommended_asking = _round_half_up((current_asking + optimal_asking) / 2, 2)
 
     # Determine price direction
     pct_diff = (optimal_asking - current_asking) / current_asking * 100 if current_asking > 0 else 0
@@ -339,12 +398,12 @@ def compute_optimal_price(
     return {
         "optimal_asking": optimal_asking,
         "optimal_revenue_monthly": optimal_revenue_monthly,
-        "current_revenue_monthly": round(current_revenue, 2),
+        "current_revenue_monthly": _round_half_up(current_revenue, 2),
         "revenue_gap_monthly": revenue_gap,
         "price_direction": price_direction,
         "recommended_asking": recommended_asking,
         "confidence": confidence,
-        "seasonal_adjustment_applied": seasonal_adjustment,
+        "seasonal_adjustment_applied": seasonal_adjustment_dollars,
         "comp_constrained": comp_constrained,
     }
 
@@ -457,7 +516,7 @@ def _empty_result(current_revenue: float) -> dict:
     return {
         "optimal_asking": 0.0,
         "optimal_revenue_monthly": 0.0,
-        "current_revenue_monthly": round(current_revenue, 2),
+        "current_revenue_monthly": _round_half_up(current_revenue, 2),
         "revenue_gap_monthly": 0.0,
         "price_direction": "HOLD",
         "recommended_asking": 0.0,

@@ -100,6 +100,7 @@ DEFAULT_ZONE_CONFIG = {
 
 ELASTICITY_REQUIRED_FIELDS = {
     "elasticity_coefficient", "confidence", "data_points", "direction", "notes",
+    "comp_corroborated",
 }
 
 OPTIMAL_PRICE_REQUIRED_FIELDS = {
@@ -124,10 +125,13 @@ class TestComputeImpliedElasticity:
         )
 
     def test_a1_stable_is_inelastic_or_unknown(self) -> None:
-        """A1: flat asking + stable occ = INELASTIC or UNKNOWN."""
+        """A1: flat asking + stable occ = INELASTIC or UNKNOWN.
+
+        Confidence can be HIGH when comp corroboration boosts it.
+        """
         result = compute_implied_elasticity(A1_SNAPSHOTS, A1_COMP_TRENDS)
         assert result["direction"] in ("INELASTIC", "UNKNOWN")
-        assert result["confidence"] in ("LOW", "MEDIUM")
+        assert result["confidence"] in ("LOW", "MEDIUM", "HIGH")
 
     def test_b1_declining_is_elastic(self) -> None:
         """B1: dropping asking + declining occ = ELASTIC with positive coefficient."""
@@ -190,6 +194,48 @@ class TestComputeImpliedElasticity:
         result = compute_implied_elasticity(alt_snapshots, alt_comps)
         assert result["data_points"] == 4
         assert result["direction"] in ("ELASTIC", "INELASTIC", "UNKNOWN")
+
+    def test_comp_corroboration_boosts_confidence(self) -> None:
+        """When comps move in the same direction as asking, confidence should bump up.
+
+        A2: asking rises month-over-month while occ declines. Comps also rise.
+        The comp corroboration should boost confidence by one level.
+        """
+        # Run without comp trends to get baseline confidence
+        result_no_comps = compute_implied_elasticity(A2_SNAPSHOTS, [])
+        # Run with comp trends (A2 comps also rise: 1390 → 1393 → 1395 → 1396)
+        result_with_comps = compute_implied_elasticity(A2_SNAPSHOTS, A2_COMP_TRENDS)
+
+        # Both asking and comps are rising → comp_corroborated should be True
+        assert result_with_comps["comp_corroborated"] is True
+        assert "comp corroboration" in result_with_comps["notes"]
+        assert "confidence boosted" in result_with_comps["notes"]
+
+        # Confidence with corroboration should be >= confidence without
+        levels = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+        assert levels[result_with_comps["confidence"]] >= levels[result_no_comps["confidence"]]
+
+    def test_comp_corroboration_empty_comps_noted(self) -> None:
+        """When comp_trends is empty, notes should mention it and comp_corroborated=False."""
+        result = compute_implied_elasticity(A2_SNAPSHOTS, [])
+        assert result["comp_corroborated"] is False
+        assert "no comp trend data" in result["notes"]
+
+    def test_comp_divergence_no_boost(self) -> None:
+        """When comps move opposite to asking rents, no confidence boost.
+
+        B1: asking falls month-over-month. Construct comps that rise.
+        """
+        # B1 asking is falling. Create comp data that rises (divergent).
+        divergent_comps = [
+            {"month": "2025-12", "avg_asking_rent": 1400},
+            {"month": "2026-01", "avg_asking_rent": 1415},
+            {"month": "2026-02", "avg_asking_rent": 1430},
+            {"month": "2026-03", "avg_asking_rent": 1445},
+        ]
+        result = compute_implied_elasticity(B1_SNAPSHOTS, divergent_comps)
+        assert result["comp_corroborated"] is False
+        assert "comp divergence" in result["notes"]
 
 
 # ============================================================
@@ -288,20 +334,40 @@ class TestComputeOptimalPrice:
             assert result["revenue_gap_monthly"] > 0
 
     def test_seasonal_spring_shifts_up(self) -> None:
-        """Spring ramp (months_to_peak <= 3) should push optimal slightly up."""
+        """Spring ramp (months_to_peak <= 3) should push optimal slightly up.
+
+        seasonal_adjustment_applied is in dollars (not percentage).
+        """
         elasticity = self._default_elasticity("ELASTIC")
         elasticity["elasticity_coefficient"] = 0.5
         result_spring = compute_optimal_price(A1_METRICS, elasticity, SPRING_SEASONAL)
         result_offpeak = compute_optimal_price(A1_METRICS, elasticity, OFFPEAK_SEASONAL)
         assert result_spring["optimal_asking"] >= result_offpeak["optimal_asking"]
+        # seasonal_adjustment_applied is now dollars — spring should be positive, offpeak negative
+        assert result_spring["seasonal_adjustment_applied"] > 0
         assert result_spring["seasonal_adjustment_applied"] != result_offpeak["seasonal_adjustment_applied"]
 
     def test_seasonal_offpeak_shifts_down(self) -> None:
-        """Off-peak (months_to_peak >= 9) should push optimal slightly down."""
+        """Off-peak (months_to_peak >= 9) should push optimal slightly down.
+
+        seasonal_adjustment_applied is in dollars (negative = price reduced).
+        """
         elasticity = self._default_elasticity("ELASTIC")
         elasticity["elasticity_coefficient"] = 0.5
         result_offpeak = compute_optimal_price(A1_METRICS, elasticity, OFFPEAK_SEASONAL)
         assert result_offpeak["seasonal_adjustment_applied"] < 0
+
+    def test_seasonal_adjustment_is_dollars_not_percentage(self) -> None:
+        """seasonal_adjustment_applied should be in dollars, not a percentage.
+
+        For a ~$1365 asking, a 1% seasonal bump = ~$13-14, not 1.0.
+        """
+        elasticity = self._default_elasticity("ELASTIC")
+        elasticity["elasticity_coefficient"] = 0.5
+        result = compute_optimal_price(A1_METRICS, elasticity, SPRING_SEASONAL)
+        adj = result["seasonal_adjustment_applied"]
+        # The dollar amount should be roughly 1% of asking (~$13-14), not 1.0
+        assert abs(adj) > 5.0, f"Expected dollar amount > $5, got {adj} — looks like a percentage"
 
     def test_custom_zone_config(self) -> None:
         """Custom zone_config should be accepted and used."""
