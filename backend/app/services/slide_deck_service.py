@@ -35,13 +35,13 @@ def assemble_slide_deck(
         _slide_3_portfolio_snapshot(metrics),
         _slide_4_property_a(metrics, diagnosis, narratives),
         _slide_5_property_b(metrics, diagnosis, narratives),
-        _slide_6_trends(narratives),
-        _slide_7_revenue_at_risk(metrics, narratives),
+        _slide_6_trends(metrics, narratives),
+        _slide_7_revenue_analysis(metrics, narratives),
         _slide_8_action_overview(action_plan, narratives),
         _slide_9_phase1(action_plan, narratives),
         _slide_10_decision_tree(action_plan, narratives),
         _slide_11_investigation(diagnosis, narratives),
-        _slide_12_summary(metrics, action_plan, narratives),
+        _slide_12_revenue_roadmap(metrics, action_plan, narratives),
     ]
 
     return {
@@ -81,10 +81,11 @@ def _slide_2_executive_summary(metrics: dict, diagnosis: dict, narratives: dict)
             "key_findings": narratives.get("slide_2_findings", []),
         },
         "viz_data": {
-            "score_gauge": viz.generate_score_gauge(diagnosis),
+            "score_gauge": viz.generate_score_gauge(diagnosis, metrics),
             "kpi_cards": viz.generate_kpi_cards(metrics),
+            "dimension_breakdown": viz.generate_dimension_breakdown(metrics),
         },
-        "layout": {"template": "executive_summary", "components": ["score_gauge", "kpi_cards"]},
+        "layout": {"template": "executive_summary", "components": ["score_gauge", "kpi_cards", "dimension_breakdown"]},
     }
 
 
@@ -113,8 +114,8 @@ def _slide_4_property_a(metrics: dict, diagnosis: dict, narratives: dict) -> dic
         },
         "viz_data": {
             "score_cards": viz.generate_dual_score_card(diagnosis, "A"),
-            "waterfall_a1": viz.generate_rent_waterfall("A1"),
-            "waterfall_a2": viz.generate_rent_waterfall("A2"),
+            "waterfall_a1": viz.generate_rent_waterfall("A1", metrics),
+            "waterfall_a2": viz.generate_rent_waterfall("A2", metrics),
         },
         "layout": {"template": "property_deep_dive", "components": ["score_cards", "waterfall"]},
     }
@@ -130,14 +131,14 @@ def _slide_5_property_b(metrics: dict, diagnosis: dict, narratives: dict) -> dic
         },
         "viz_data": {
             "score_cards": viz.generate_dual_score_card(diagnosis, "B"),
-            "waterfall_b1": viz.generate_rent_waterfall("B1"),
-            "waterfall_b2": viz.generate_rent_waterfall("B2"),
+            "waterfall_b1": viz.generate_rent_waterfall("B1", metrics),
+            "waterfall_b2": viz.generate_rent_waterfall("B2", metrics),
         },
         "layout": {"template": "property_deep_dive", "components": ["score_cards", "waterfall"]},
     }
 
 
-def _slide_6_trends(narratives: dict) -> dict:
+def _slide_6_trends(metrics: dict, narratives: dict) -> dict:
     return {
         "slide_number": 6,
         "slide_type": "TREND_ANALYSIS",
@@ -146,25 +147,25 @@ def _slide_6_trends(narratives: dict) -> dict:
             "analysis": narratives.get("slide_6_narrative", ""),
         },
         "viz_data": {
-            "line_charts": viz.generate_line_charts(),
+            "line_charts": viz.generate_line_charts(metrics),
         },
         "layout": {"template": "trend_analysis", "components": ["line_charts"]},
     }
 
 
-def _slide_7_revenue_at_risk(metrics: dict, narratives: dict) -> dict:
+def _slide_7_revenue_analysis(metrics: dict, narratives: dict) -> dict:
     return {
         "slide_number": 7,
-        "slide_type": "REVENUE_AT_RISK",
-        "title": "Revenue at Risk",
+        "slide_type": "REVENUE_ANALYSIS",
+        "title": "Revenue Analysis",
         "narrative": {
             "analysis": narratives.get("slide_7_narrative", ""),
         },
         "viz_data": {
-            "stacked_bar": viz.generate_stacked_bar(metrics),
+            "revenue_gap_waterfall": viz.generate_revenue_gap_waterfall(metrics),
             "daily_burn": viz.generate_daily_burn_counter(metrics),
         },
-        "layout": {"template": "revenue_at_risk", "components": ["stacked_bar", "daily_burn"]},
+        "layout": {"template": "revenue_analysis", "components": ["revenue_gap_waterfall", "daily_burn"]},
     }
 
 
@@ -229,16 +230,17 @@ def _slide_11_investigation(diagnosis: dict, narratives: dict) -> dict:
     }
 
 
-def _slide_12_summary(metrics: dict, action_plan: dict, narratives: dict) -> dict:
+def _slide_12_revenue_roadmap(metrics: dict, action_plan: dict, narratives: dict) -> dict:
     return {
         "slide_number": 12,
-        "slide_type": "SUMMARY",
-        "title": "Summary & Next Steps",
+        "slide_type": "REVENUE_ROADMAP",
+        "title": "Revenue Roadmap",
         "narrative": {
             "summary": narratives.get("slide_12_summary", ""),
         },
         "viz_data": {
             "before_after": viz.generate_before_after(metrics, action_plan),
+            "revenue_roadmap": viz.generate_revenue_roadmap(metrics, action_plan),
         },
-        "layout": {"template": "summary", "components": ["before_after"]},
+        "layout": {"template": "revenue_roadmap", "components": ["before_after", "revenue_roadmap"]},
     }

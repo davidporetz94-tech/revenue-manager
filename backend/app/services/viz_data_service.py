@@ -53,41 +53,80 @@ SNAPSHOT_TRENDS = {
 }
 
 
-def generate_score_gauge(diagnosis: dict) -> dict:
-    """Slide 2: Portfolio health score gauge."""
+def generate_score_gauge(diagnosis: dict, metrics: dict | None = None) -> dict:
+    """Slide 2: Portfolio health score gauge with 5-zone system.
+
+    Reads revenue_efficiency from metrics if available; falls back to
+    diagnosis portfolio score.
+    """
     score = 50
-    if diagnosis and "portfolio_assessment" in diagnosis:
+    # Prefer revenue_efficiency score from metrics
+    if metrics:
+        re_section = metrics.get("revenue_efficiency", {})
+        if re_section and "revenue_efficiency_score" in re_section:
+            score = re_section["revenue_efficiency_score"]
+        elif diagnosis and "portfolio_assessment" in diagnosis:
+            score = diagnosis["portfolio_assessment"].get("overall_portfolio_score", 50)
+    elif diagnosis and "portfolio_assessment" in diagnosis:
         score = diagnosis["portfolio_assessment"].get("overall_portfolio_score", 50)
+
     return {
         "score": score,
         "max": 100,
         "zones": [
-            {"min": 0, "max": 39, "color": "#DC2626", "label": "Critical"},
-            {"min": 40, "max": 64, "color": "#D97706", "label": "Action Needed"},
-            {"min": 65, "max": 79, "color": "#F59E0B", "label": "Watch"},
-            {"min": 80, "max": 100, "color": "#059669", "label": "Healthy"},
+            {"min": 0, "max": 29, "color": "#DC2626", "label": "Crisis"},
+            {"min": 30, "max": 49, "color": "#D97706", "label": "Distressed"},
+            {"min": 50, "max": 64, "color": "#F59E0B", "label": "Imbalanced"},
+            {"min": 65, "max": 79, "color": "#3B82F6", "label": "Opportunity"},
+            {"min": 80, "max": 100, "color": "#059669", "label": "Optimized"},
         ],
     }
 
 
 def generate_kpi_cards(metrics: dict) -> list[dict]:
-    """Slide 2: 4 KPI cards for executive summary."""
+    """Slide 2: 6 KPI cards for executive summary."""
     portfolio = metrics.get("portfolio_metrics", {})
     total_vacant = portfolio.get("total_vacant", 0)
     total_units = portfolio.get("total_units", 0)
     blended_occ = portfolio.get("blended_occupancy", 0)
-    total_cost = portfolio.get("total_monthly_vacancy_cost", 0)
+
+    # Revenue gap data (graceful fallback)
+    revenue_gap = metrics.get("revenue_gap", {})
+    total_gap_monthly = revenue_gap.get("total_gap_monthly", 0)
+
+    # Renewal opportunity data (graceful fallback)
+    renewal_opp = metrics.get("renewal_opportunity", {})
+    net_annual_capture = renewal_opp.get("net_annual_capture", 0)
+
+    # Revenue efficiency data (graceful fallback)
+    rev_eff = metrics.get("revenue_efficiency", {})
+    efficiency_score = rev_eff.get("revenue_efficiency_score", 0)
 
     return [
-        {"label": "Total Units", "value": str(total_units), "format": "number", "color": "#6B7280", "trend": "neutral"},
-        {"label": "Blended Occupancy", "value": f"{blended_occ:.1%}", "format": "percent", "color": "#D97706" if blended_occ < 0.92 else "#059669", "trend": "down" if blended_occ < 0.94 else "up"},
-        {"label": "Total Vacant", "value": str(total_vacant), "format": "number", "color": "#DC2626" if total_vacant > 10 else "#D97706", "trend": "up"},
-        {"label": "Monthly Vacancy Cost", "value": f"${total_cost:,.0f}", "format": "currency", "color": "#DC2626", "trend": "up"},
+        {"label": "Total Units", "value": str(total_units), "format": "number",
+         "color": "#6B7280", "trend": "neutral"},
+        {"label": "Blended Occupancy", "value": f"{blended_occ:.1%}", "format": "percent",
+         "color": "#D97706" if blended_occ < 0.92 else "#059669",
+         "trend": "down" if blended_occ < 0.94 else "up"},
+        {"label": "Total Vacant", "value": str(total_vacant), "format": "number",
+         "color": "#DC2626" if total_vacant > 10 else "#D97706", "trend": "up"},
+        {"label": "Revenue Gap $/mo", "value": f"${total_gap_monthly:,.0f}", "format": "currency",
+         "color": "#DC2626" if total_gap_monthly > 10000 else "#D97706", "trend": "up"},
+        {"label": "Renewal Opportunity $/yr", "value": f"${net_annual_capture:,.0f}", "format": "currency",
+         "color": "#059669" if net_annual_capture > 0 else "#6B7280",
+         "trend": "up" if net_annual_capture > 0 else "neutral"},
+        {"label": "Revenue Efficiency %", "value": f"{efficiency_score}%", "format": "percent",
+         "color": "#DC2626" if efficiency_score < 50 else "#D97706" if efficiency_score < 75 else "#059669",
+         "trend": "down" if efficiency_score < 65 else "up"},
     ]
 
 
 def generate_data_table(metrics: dict) -> dict:
-    """Slide 3: Full portfolio snapshot table matching EliseAI export."""
+    """Slide 3: Full portfolio snapshot table matching EliseAI export.
+
+    Includes optimal_asking, revenue_gap, and elasticity_confidence columns
+    when data is available. Colors by gap magnitude.
+    """
     columns = [
         {"key": "unit_type", "label": "Unit Type", "format": "text"},
         {"key": "bed_bath", "label": "Bed/Bath", "format": "text"},
@@ -97,15 +136,33 @@ def generate_data_table(metrics: dict) -> dict:
         {"key": "occ_rate", "label": "Occ %", "format": "percent"},
         {"key": "asking", "label": "Asking", "format": "currency"},
         {"key": "predicted", "label": "Predicted", "format": "currency"},
+        {"key": "optimal_asking", "label": "Optimal", "format": "currency"},
         {"key": "comps", "label": "Comps", "format": "currency"},
         {"key": "in_place", "label": "In-Place", "format": "currency"},
+        {"key": "revenue_gap", "label": "Rev Gap", "format": "currency"},
+        {"key": "elasticity_confidence", "label": "Elast. Conf.", "format": "text"},
         {"key": "dom", "label": "DOM", "format": "number"},
         {"key": "exposure", "label": "Exposure", "format": "percent"},
     ]
 
+    ut_metrics = metrics.get("unit_type_metrics", {})
+
     rows = []
     highlights = []
     for i, (code, d) in enumerate(EXPORT_DATA.items()):
+        # Get optimal pricing data if available
+        ut_m = ut_metrics.get(code, {})
+        optimal_pricing = ut_m.get("optimal_pricing", {})
+        optimal_asking = optimal_pricing.get("optimal_asking", None)
+
+        # Get revenue gap for this unit type
+        ut_revenue_gap = ut_m.get("revenue_gap", {})
+        unit_gap = ut_revenue_gap.get("total_gap_monthly", 0)
+
+        # Get elasticity confidence
+        elasticity = ut_m.get("elasticity", {})
+        elast_conf = elasticity.get("confidence", "N/A")
+
         row = {
             "unit_type": code,
             "bed_bath": f"{d['bed']}/{d['bath']}",
@@ -115,14 +172,17 @@ def generate_data_table(metrics: dict) -> dict:
             "occ_rate": d["occ"],
             "asking": d["asking"],
             "predicted": d["predicted"],
+            "optimal_asking": optimal_asking if optimal_asking is not None else d["asking"],
             "comps": d["comps"],
             "in_place": d["in_place"],
+            "revenue_gap": unit_gap,
+            "elasticity_confidence": elast_conf,
             "dom": d["dom"],
             "exposure": d["tot_exp"],
         }
         rows.append(row)
 
-        # Highlight critical cells
+        # Highlight critical cells — color by gap magnitude in addition to occupancy
         if d["occ"] < 0.82:
             highlights.append({"row": i, "col": "occ_rate", "color": "#DC2626"})
         elif d["occ"] < 0.88:
@@ -130,20 +190,43 @@ def generate_data_table(metrics: dict) -> dict:
         if d["tot_exp"] >= 0.20:
             highlights.append({"row": i, "col": "exposure", "color": "#DC2626"})
 
+        # Color by revenue gap magnitude
+        if unit_gap > 5000:
+            highlights.append({"row": i, "col": "revenue_gap", "color": "#DC2626"})
+        elif unit_gap > 2000:
+            highlights.append({"row": i, "col": "revenue_gap", "color": "#D97706"})
+
     return {"columns": columns, "rows": rows, "highlights": highlights}
 
 
-def generate_rent_waterfall(code: str) -> list[dict]:
-    """Slides 4-5: Rent waterfall for a unit type."""
+def generate_rent_waterfall(code: str, metrics: dict | None = None) -> list[dict]:
+    """Slides 4-5: Rent waterfall for a unit type.
+
+    Includes an 'Optimal' bar between Predicted and Asking when
+    optimal_asking is available from metrics.
+    """
     d = EXPORT_DATA[code]
-    return [
+
+    bars = [
         {"label": "Base Rent", "value": d["base"], "type": "base", "color": "#6B7280"},
         {"label": f"+ Amenity (${d['amenity']})", "value": d["amenity"], "type": "addition", "color": "#0D9488"},
         {"label": "= Predicted", "value": d["predicted"], "type": "subtotal", "color": "#1F2937"},
-        {"label": "Asking", "value": d["asking"], "type": "comparison", "color": "#7C3AED"},
-        {"label": "Comps", "value": d["comps"], "type": "comparison", "color": "#2563EB"},
-        {"label": "In-Place", "value": d["in_place"], "type": "comparison", "color": "#059669"},
     ]
+
+    # Insert Optimal bar if data available
+    if metrics:
+        ut_m = metrics.get("unit_type_metrics", {}).get(code, {})
+        optimal_pricing = ut_m.get("optimal_pricing", {})
+        optimal_asking = optimal_pricing.get("optimal_asking")
+        if optimal_asking is not None:
+            bars.append({"label": "Optimal", "value": optimal_asking, "type": "comparison", "color": "#7C3AED"})
+
+    bars.extend([
+        {"label": "Asking", "value": d["asking"], "type": "comparison", "color": "#7C3AED" if not metrics else "#2563EB"},
+        {"label": "Comps", "value": d["comps"], "type": "comparison", "color": "#2563EB" if not metrics else "#0D9488"},
+        {"label": "In-Place", "value": d["in_place"], "type": "comparison", "color": "#059669"},
+    ])
+    return bars
 
 
 def generate_dual_score_card(diagnosis: dict, prop_code: str) -> list[dict]:
@@ -167,22 +250,118 @@ def generate_dual_score_card(diagnosis: dict, prop_code: str) -> list[dict]:
     return cards
 
 
-def generate_line_charts() -> list[dict]:
-    """Slide 6: Trend line charts for all 4 unit types."""
-    return [
-        {"unit_type": code, "series": series}
-        for code, series in SNAPSHOT_TRENDS.items()
-    ]
+def generate_line_charts(metrics: dict | None = None) -> list[dict]:
+    """Slide 6: Trend line charts for all 4 unit types.
+
+    Adds optimal price trend data if available from metrics.
+    """
+    charts = []
+    for code, series in SNAPSHOT_TRENDS.items():
+        chart_entry: dict = {"unit_type": code, "series": series}
+
+        # Add optimal price trend if metrics available
+        if metrics:
+            ut_m = metrics.get("unit_type_metrics", {}).get(code, {})
+            optimal_pricing = ut_m.get("optimal_pricing", {})
+            optimal_asking = optimal_pricing.get("optimal_asking")
+            if optimal_asking is not None:
+                chart_entry["optimal_price"] = optimal_asking
+
+        charts.append(chart_entry)
+    return charts
 
 
-def generate_stacked_bar(metrics: dict) -> list[dict]:
-    """Slide 7: Stacked bar chart of vacancy cost by unit type."""
-    bars = []
-    for code, m in metrics.get("unit_type_metrics", {}).items():
-        cost = m["revenue_metrics"]["monthly_vacancy_cost"]
-        color = "#DC2626" if cost > 8000 else "#D97706" if cost > 5000 else "#F59E0B"
-        bars.append({"unit_type": code, "vacancy_cost": cost, "color": color})
-    return sorted(bars, key=lambda b: b["vacancy_cost"], reverse=True)
+def generate_revenue_gap_waterfall(metrics: dict) -> dict:
+    """Slide 7: Horizontal waterfall showing gap decomposition by lever.
+
+    Takes the revenue_gap section from metrics. Returns segment data
+    for a waterfall chart showing how each lever contributes to the gap.
+    """
+    revenue_gap = metrics.get("revenue_gap", {})
+
+    current_monthly = revenue_gap.get("current_monthly_revenue", 0)
+    optimal_monthly = revenue_gap.get("optimal_monthly_revenue", 0)
+    vacancy_cost = revenue_gap.get("vacancy_cost", 0)
+    new_lease_underpricing = revenue_gap.get("new_lease_underpricing", 0)
+    renewal_opportunity = revenue_gap.get("renewal_opportunity", 0)
+    concession_drag = revenue_gap.get("concession_drag", 0)
+
+    return {
+        "segments": [
+            {"label": "Current Revenue", "value": current_monthly, "type": "base"},
+            {"label": "+ Fill Vacant", "value": vacancy_cost, "type": "addition", "color": "#DC2626"},
+            {"label": "+ Reprice Leases", "value": new_lease_underpricing, "type": "addition", "color": "#D97706"},
+            {"label": "+ Capture Renewals", "value": renewal_opportunity, "type": "addition", "color": "#059669"},
+            {"label": "- Concession Drag", "value": -concession_drag, "type": "subtraction", "color": "#6B7280"},
+            {"label": "= Optimal Revenue", "value": optimal_monthly, "type": "total"},
+        ]
+    }
+
+
+def generate_revenue_roadmap(metrics: dict, action_plan: dict) -> dict:
+    """Slide 12: Before/after bars with per-lever dollar amounts.
+
+    Returns current vs projected monthly revenue with lever breakdown.
+    """
+    revenue_gap = metrics.get("revenue_gap", {})
+    current_monthly = revenue_gap.get("current_monthly_revenue", 0)
+    optimal_monthly = revenue_gap.get("optimal_monthly_revenue", 0)
+
+    vacancy_cost = revenue_gap.get("vacancy_cost", 0)
+    new_lease_underpricing = revenue_gap.get("new_lease_underpricing", 0)
+    renewal_opportunity = revenue_gap.get("renewal_opportunity", 0)
+    concession_drag = revenue_gap.get("concession_drag", 0)
+
+    # Projected = current + all levers (conservative: assume partial capture)
+    projected_monthly = current_monthly + vacancy_cost + new_lease_underpricing + renewal_opportunity - concession_drag
+    # Cap at optimal if projected exceeds it
+    if optimal_monthly > 0:
+        projected_monthly = min(projected_monthly, optimal_monthly)
+
+    return {
+        "current_monthly": current_monthly,
+        "projected_monthly": projected_monthly,
+        "levers": [
+            {"label": "Fill Vacant Units", "amount": vacancy_cost, "lever": "FILL"},
+            {"label": "Reprice New Leases", "amount": new_lease_underpricing, "lever": "REPRICE"},
+            {"label": "Capture Renewals", "amount": renewal_opportunity, "lever": "RENEW"},
+            {"label": "Remove Concessions", "amount": concession_drag, "lever": "DE_CONCESSION"},
+        ]
+    }
+
+
+def generate_dimension_breakdown(metrics: dict) -> dict:
+    """Slide 2: Horizontal stacked bar of occ/pricing/momentum scores and weights.
+
+    Reads from revenue_efficiency section if available, otherwise provides
+    sensible defaults.
+    """
+    rev_eff = metrics.get("revenue_efficiency", {})
+    dimensions_data = rev_eff.get("dimensions", {})
+
+    occ_health = dimensions_data.get("occupancy_health", {})
+    pricing_align = dimensions_data.get("pricing_alignment", {})
+    rent_momentum = dimensions_data.get("rent_roll_momentum", {})
+
+    occ_score = occ_health.get("score", 50)
+    occ_weight = occ_health.get("weight", 0.40)
+    pricing_score = pricing_align.get("score", 50)
+    pricing_weight = pricing_align.get("weight", 0.35)
+    momentum_score = rent_momentum.get("score", 50)
+    momentum_weight = rent_momentum.get("weight", 0.25)
+
+    occupancy_zone = rev_eff.get("occupancy_zone", "BALANCED")
+    composite_score = rev_eff.get("revenue_efficiency_score", 50)
+
+    return {
+        "dimensions": [
+            {"name": "Occupancy Health", "score": occ_score, "weight": occ_weight, "color": "#3B82F6"},
+            {"name": "Pricing Alignment", "score": pricing_score, "weight": pricing_weight, "color": "#8B5CF6"},
+            {"name": "Rent Roll Momentum", "score": momentum_score, "weight": momentum_weight, "color": "#10B981"},
+        ],
+        "occupancy_zone": occupancy_zone,
+        "composite_score": composite_score,
+    }
 
 
 def generate_daily_burn_counter(metrics: dict) -> dict:
