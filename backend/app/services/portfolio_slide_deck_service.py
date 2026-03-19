@@ -68,7 +68,7 @@ def assemble_portfolio_slide_deck(
             "findings": narratives.get("slide_2_findings", []),
         },
         "viz_data": {
-            "score_gauge": generate_portfolio_score_gauge(diagnosis),
+            "score_gauge": generate_portfolio_score_gauge(diagnosis, aggregate),
             "kpi_cards": generate_portfolio_kpi_cards(aggregate),
         },
         "layout": {
@@ -96,7 +96,10 @@ def assemble_portfolio_slide_deck(
         "title": "Property Health Ranking",
         "narrative": {"text": narratives.get("slide_4_narrative", "")},
         "viz_data": {
-            "ranking_cards": generate_property_ranking_cards(diagnosis),
+            "ranking_cards": generate_property_ranking_cards(
+                diagnosis,
+                property_ranking=metrics.get("property_ranking"),
+            ),
         },
         "layout": {"template": "ranking", "components": ["cards", "narrative"]},
     })
@@ -127,6 +130,8 @@ def assemble_portfolio_slide_deck(
                 "monthly_amount": aggregate.get("total_monthly_vacancy_cost", 0),
                 "annual_amount": aggregate.get("total_monthly_vacancy_cost", 0) * 12,
             },
+            "revenue_gap_total": aggregate.get("total_revenue_gap", 0),
+            "revenue_efficiency": aggregate.get("portfolio_revenue_efficiency", 0),
         },
         "layout": {
             "template": "revenue_at_risk",

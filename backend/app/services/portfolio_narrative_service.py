@@ -13,36 +13,47 @@ logger = logging.getLogger(__name__)
 PORTFOLIO_DIAGNOSTIC_NARRATIVE_PROMPT = """You are a senior revenue management consultant presenting a portfolio-level pricing diagnostic to a client VP of Operations.
 
 TONE RULES (mandatory):
+- Use professional consulting tone. Be direct and specific but not alarmist.
 - NEVER use hedging language
+- NEVER use alarmist language — no "hemorrhaging", "crisis", "bleeding", "critical", "dire", "catastrophic"
+- Use "below target", "needs attention", "underperforming" instead
 - ALWAYS use direct statements with dollar amounts
 - Address the client directly: "Your portfolio..."
 - Active voice only
 - Max 4 sentences per narrative block
 - Plain text only — NO markdown
 
+REVENUE METRICS TO REFERENCE:
+- Revenue efficiency scores and grades (0-39 NEEDS ATTENTION, 40-54 UNDERPERFORMING, 55-69 ADJUSTING, 70-84 OPPORTUNITY, 85-100 OPTIMIZED)
+- Revenue gap decomposition (vacancy cost, new lease underpricing, in-place underpricing, renewal opportunity, concession drag)
+- Frame revenue gap as "capture opportunity" not "loss"
+
 Output ONLY valid JSON:
 {
-  "slide_2_headline": "string (portfolio verdict, max 20 words)",
+  "slide_2_headline": "string (portfolio verdict referencing revenue gap as opportunity, max 20 words)",
   "slide_2_findings": ["string", "string", "string"],
-  "slide_3_narrative": "string (property comparison insights)",
-  "slide_4_narrative": "string (ranking analysis)",
+  "slide_3_narrative": "string (property comparison insights including revenue efficiency)",
+  "slide_4_narrative": "string (ranking analysis referencing revenue efficiency scores)",
   "slide_5_narrative": "string (trend analysis)",
-  "slide_6_narrative": "string (revenue at risk urgency)",
+  "slide_6_narrative": "string (revenue at risk — frame as capture opportunity, include revenue gap)",
   "slide_14_narrative": "string (investigation priorities)",
-  "slide_15_summary": "string (portfolio call to action)"
+  "slide_15_summary": "string (portfolio call to action with revenue gap and efficiency)"
 }"""
 
 PORTFOLIO_ACTION_NARRATIVE_PROMPT = """You are a senior revenue management consultant presenting a 30-day portfolio-wide action plan.
 
 TONE RULES (mandatory):
+- Use professional consulting tone. Be direct and specific but not alarmist.
+- NEVER use alarmist language — no "hemorrhaging", "crisis", "bleeding", "critical"
 - Direct language with dollar amounts
 - Actions specify property and unit type
+- Frame actions in terms of revenue capture opportunity
 - Plain text only — NO markdown
 - Max 4 sentences per block
 
 Output ONLY valid JSON:
 {
-  "slide_11_narrative": "string (action plan overview)",
+  "slide_11_narrative": "string (action plan overview referencing revenue gap opportunity)",
   "slide_12_narrative": "string (Phase 1 detail)",
   "slide_13_narrative": "string (Day 15 decision logic)"
 }"""
@@ -105,63 +116,94 @@ def _generate_fallback_narratives(
 ) -> dict:
     """Template-based fallback narratives for portfolio slides."""
     agg = metrics.get("aggregate", {})
+    properties = metrics.get("properties", {})
+    property_ranking = metrics.get("property_ranking", [])
+
+    total_units = agg.get("total_units", 0)
     total_vacant = agg.get("total_vacant", 0)
-    total_daily = agg.get("total_daily_burn", 0)
-    total_monthly = agg.get("total_monthly_cost", 0)
-    prop_count = agg.get("property_count", 0)
-    worst = agg.get("worst_property", "")
+    total_monthly_vacancy = agg.get("total_monthly_vacancy_cost", 0)
+    total_daily = round(total_monthly_vacancy / 30, 2) if total_monthly_vacancy else 0
+    total_revenue_gap = agg.get("total_revenue_gap", 0)
+    rev_efficiency = agg.get("portfolio_revenue_efficiency", 0)
+    prop_count = len(properties)
+
+    # Determine worst property from ranking (sorted worst-first)
+    worst = property_ranking[0].get("property_name", "") if property_ranking else ""
+
+    # Revenue efficiency grade
+    if rev_efficiency >= 85:
+        grade = "OPTIMIZED"
+    elif rev_efficiency >= 70:
+        grade = "OPPORTUNITY"
+    elif rev_efficiency >= 55:
+        grade = "ADJUSTING"
+    elif rev_efficiency >= 40:
+        grade = "UNDERPERFORMING"
+    else:
+        grade = "NEEDS ATTENTION"
+
+    # Per-property efficiency summaries for findings
+    prop_findings = []
+    for r in property_ranking:
+        pname = r.get("property_name", "")
+        peff = r.get("revenue_efficiency", 0)
+        pgap = r.get("revenue_gap", 0)
+        prop_findings.append(
+            f"{pname}: {peff:.0f}% revenue efficiency, ${pgap:,.0f}/mo gap"
+        )
 
     return {
         "slide_2_headline": (
-            f"Your {prop_count}-property portfolio has {total_vacant} "
-            f"vacant units burning ${total_daily:,.0f} per day."
+            f"Your portfolio has a ${total_revenue_gap:,.0f}/month "
+            f"revenue capture opportunity across {prop_count} properties."
         ),
         "slide_2_findings": [
-            f"{total_vacant} total vacant units across {prop_count} properties",
-            f"${total_monthly:,.0f} monthly vacancy cost",
             (
-                f"{worst} requires immediate attention"
-                if worst
-                else "Review all properties"
+                f"Portfolio revenue efficiency is {rev_efficiency:.0f}% ({grade}) "
+                f"across {total_units} units"
             ),
-        ],
+            f"${total_revenue_gap:,.0f}/mo total revenue gap with ${total_monthly_vacancy:,.0f}/mo vacancy cost",
+        ] + prop_findings[:1],
         "slide_3_narrative": (
             f"Your portfolio spans {prop_count} properties with "
-            f"{agg.get('total_units', 0)} total units. Daily burn of "
-            f"${total_daily:,.0f} is concentrated in {worst}."
+            f"{total_units} total units and {total_vacant} vacancies. "
+            f"Revenue efficiency is {rev_efficiency:.0f}% with a "
+            f"${total_revenue_gap:,.0f}/mo capture opportunity."
         ),
         "slide_4_narrative": (
-            f"{worst} ranks lowest in portfolio health. Address its vacancy "
-            f"first to reduce the largest share of your ${total_daily:,.0f}/day burn."
+            f"{worst} has the lowest revenue efficiency in the portfolio. "
+            f"Addressing pricing alignment and vacancy there will have the "
+            f"highest impact on closing the ${total_revenue_gap:,.0f}/mo gap."
         ),
         "slide_5_narrative": (
             "Occupancy trends across your portfolio show diverging trajectories. "
             "Focus on properties with declining occupancy before spring leasing season."
         ),
         "slide_6_narrative": (
-            f"Your portfolio is burning ${total_daily:,.0f} per day — "
-            f"${total_monthly:,.0f} per month. {worst} accounts for the largest share."
+            f"Your portfolio has ${total_revenue_gap:,.0f}/mo in revenue gap "
+            f"and ${total_monthly_vacancy:,.0f}/mo in vacancy cost. "
+            f"{worst} accounts for the largest share of the opportunity."
         ),
         "slide_11_narrative": (
-            f"This plan targets your ${total_daily:,.0f}/day portfolio burn with "
+            f"This plan targets the ${total_revenue_gap:,.0f}/mo revenue gap with "
             f"phased actions across all {prop_count} properties, prioritized by "
-            "daily burn impact."
+            "revenue efficiency impact."
         ),
         "slide_12_narrative": (
-            "Day 1: Address the highest-burn property first with direct price "
-            "cuts where confidence is high, experiments where it's not."
+            "Day 1: Address the lowest-efficiency property first with pricing "
+            "adjustments where confidence is high, experiments where it is not."
         ),
         "slide_13_narrative": (
             "Day 15: Evaluate results property by property. Lock winning "
-            "strategies, escalate or pivot where experiments didn't converge."
+            "strategies, escalate or pivot where experiments did not converge."
         ),
         "slide_14_narrative": (
-            "Several areas require cross-property investigation — unit condition, "
-            "listing quality, and tour conversion rates."
+            "Several areas require cross-property investigation — pricing alignment, "
+            "lease velocity, and renewal conversion rates."
         ),
         "slide_15_summary": (
-            f"Your portfolio requires coordinated action across {prop_count} "
-            f"properties. The 30-day plan targets "
-            f"${int(total_monthly * 0.3):,.0f} monthly savings."
+            f"Your portfolio scores {rev_efficiency:.0f}% revenue efficiency "
+            f"with a ${total_revenue_gap:,.0f}/mo capture opportunity. "
+            f"The 30-day plan targets coordinated action across {prop_count} properties."
         ),
     }

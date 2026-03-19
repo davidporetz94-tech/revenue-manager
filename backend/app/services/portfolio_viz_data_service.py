@@ -5,19 +5,31 @@ Never Claude-generated. Never hardcoded.
 """
 
 
-def generate_portfolio_score_gauge(diagnosis: dict) -> dict:
-    """Portfolio-level health score gauge."""
+def generate_portfolio_score_gauge(diagnosis: dict, aggregate: dict | None = None) -> dict:
+    """Portfolio-level health score gauge.
+
+    Args:
+        diagnosis: portfolio diagnosis JSON.
+        aggregate: optional aggregate metrics from cross-property aggregation.
+
+    Returns:
+        Recharts-compatible gauge data dict.
+    """
     score = 50
-    if diagnosis and "cross_property_assessment" in diagnosis:
+    # Prefer aggregate revenue efficiency if available
+    if aggregate and aggregate.get("portfolio_revenue_efficiency"):
+        score = aggregate["portfolio_revenue_efficiency"]
+    elif diagnosis and "cross_property_assessment" in diagnosis:
         score = diagnosis["cross_property_assessment"].get("portfolio_score", 50)
     return {
         "score": score,
         "max": 100,
         "zones": [
-            {"min": 0, "max": 39, "color": "#DC2626", "label": "CRITICAL"},
-            {"min": 40, "max": 64, "color": "#D97706", "label": "ACTION NEEDED"},
-            {"min": 65, "max": 79, "color": "#F59E0B", "label": "WATCH"},
-            {"min": 80, "max": 100, "color": "#059669", "label": "HEALTHY"},
+            {"min": 0, "max": 39, "color": "#DC2626", "label": "NEEDS ATTENTION"},
+            {"min": 40, "max": 54, "color": "#D97706", "label": "UNDERPERFORMING"},
+            {"min": 55, "max": 69, "color": "#F59E0B", "label": "ADJUSTING"},
+            {"min": 70, "max": 84, "color": "#3B82F6", "label": "OPPORTUNITY"},
+            {"min": 85, "max": 100, "color": "#059669", "label": "OPTIMIZED"},
         ],
     }
 
@@ -36,13 +48,13 @@ def generate_portfolio_kpi_cards(aggregate: dict) -> list[dict]:
 
 
 def generate_property_comparison_table(properties: dict) -> dict:
-    """Side-by-side property comparison table."""
+    """Side-by-side property comparison table with revenue metrics."""
     rows = []
     for name, pdata in properties.items():
-        pm = pdata["portfolio_metrics"]
-        ut_metrics = pdata["unit_type_metrics"]
+        pm = pdata.get("portfolio_metrics", {})
+        ut_metrics = pdata.get("unit_type_metrics", {})
         daily_burn = sum(
-            ut["revenue_metrics"]["daily_vacancy_burn"]
+            ut.get("revenue_metrics", {}).get("daily_vacancy_burn", 0)
             for ut in ut_metrics.values()
         )
         rows.append({
@@ -53,19 +65,46 @@ def generate_property_comparison_table(properties: dict) -> dict:
             "daily_burn": daily_burn,
             "monthly_cost": daily_burn * 30,
             "unit_types": len(ut_metrics),
+            "revenue_gap": pdata.get("revenue_gap", 0),
+            "revenue_efficiency": pdata.get("revenue_efficiency", 0),
         })
     rows.sort(key=lambda r: r["daily_burn"], reverse=True)
     return {
         "columns": [
             "property", "total_units", "occupancy",
             "vacant", "daily_burn", "monthly_cost",
+            "revenue_gap", "revenue_efficiency",
         ],
         "rows": rows,
     }
 
 
-def generate_property_ranking_cards(diagnosis: dict) -> list[dict]:
-    """Property ranking cards sorted by health score."""
+def generate_property_ranking_cards(diagnosis: dict, property_ranking: list[dict] | None = None) -> list[dict]:
+    """Property ranking cards sorted by score/efficiency.
+
+    Args:
+        diagnosis: portfolio diagnosis JSON with cross_property_assessment.
+        property_ranking: optional aggregator property_ranking list with revenue data.
+
+    Returns:
+        List of ranking card dicts sorted worst-first.
+    """
+    # Prefer aggregator property_ranking if available (has revenue data)
+    if property_ranking:
+        cards = []
+        for r in property_ranking:
+            cards.append({
+                "property_name": r.get("property_name", r.get("property_key", "")),
+                "score": r.get("revenue_efficiency", 0),
+                "total_units": r.get("total_units", 0),
+                "total_vacant": r.get("total_vacant", 0),
+                "revenue_gap": r.get("revenue_gap", 0),
+                "revenue_efficiency": r.get("revenue_efficiency", 0),
+                "vacancy_cost": r.get("vacancy_cost", 0),
+            })
+        return sorted(cards, key=lambda c: c.get("score", 0))
+
+    # Fall back to diagnosis rankings
     if not diagnosis or "cross_property_assessment" not in diagnosis:
         return []
     rankings = diagnosis["cross_property_assessment"].get("property_rankings", [])
@@ -84,23 +123,25 @@ def generate_portfolio_trend_lines(properties: dict) -> dict:
 
 
 def generate_portfolio_stacked_bar(properties: dict) -> list[dict]:
-    """Revenue at risk stacked by property."""
+    """Revenue at risk stacked by property, including revenue gap."""
     bars = []
     for name, pdata in properties.items():
-        ut_metrics = pdata["unit_type_metrics"]
+        ut_metrics = pdata.get("unit_type_metrics", {})
         daily_burn = sum(
-            ut["revenue_metrics"]["daily_vacancy_burn"]
+            ut.get("revenue_metrics", {}).get("daily_vacancy_burn", 0)
             for ut in ut_metrics.values()
         )
         monthly = sum(
-            ut["revenue_metrics"]["monthly_vacancy_cost"]
+            ut.get("revenue_metrics", {}).get("monthly_vacancy_cost", 0)
             for ut in ut_metrics.values()
         )
+        revenue_gap = pdata.get("revenue_gap", 0)
         color = "#DC2626" if daily_burn > 400 else "#D97706" if daily_burn > 200 else "#F59E0B"
         bars.append({
             "property": name,
             "daily_burn": daily_burn,
             "monthly_cost": monthly,
+            "revenue_gap": revenue_gap,
             "color": color,
         })
     bars.sort(key=lambda b: b["daily_burn"], reverse=True)
