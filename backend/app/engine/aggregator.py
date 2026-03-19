@@ -209,7 +209,24 @@ def aggregate_cross_property(
         }
 
     # Portfolio-level aggregate
+    # Use weighted average of per-unit-type composite scores (not raw revenue ratio)
+    # This reflects the multi-dimensional scoring (occ health + pricing + momentum)
+    weighted_score_sum = 0.0
+    weighted_unit_count = 0
+    for _pk, pv in properties.items():
+        for _code, ut_m in pv.get("unit_type_metrics", {}).items():
+            eff = ut_m.get("revenue_efficiency", {})
+            score = eff.get("revenue_efficiency_score", 50)  # default 50 if missing
+            ut_units = ut_m.get("occupancy_metrics", {}).get("total_units", 1)
+            weighted_score_sum += score * ut_units
+            weighted_unit_count += ut_units
+
     portfolio_rev_efficiency = (
+        round_half_up(weighted_score_sum / weighted_unit_count, 1)
+        if weighted_unit_count > 0 else 0.0
+    )
+    # Also keep the raw revenue capture ratio for reference
+    revenue_capture_pct = (
         round_half_up(safe_divide(total_current_revenue, total_optimal_revenue) * 100, 1)
         if total_optimal_revenue > 0 else 0.0
     )
@@ -227,6 +244,7 @@ def aggregate_cross_property(
         "total_optimal_revenue": total_optimal_revenue,
         "total_current_revenue": total_current_revenue,
         "portfolio_revenue_efficiency": portfolio_rev_efficiency,
+        "revenue_capture_pct": revenue_capture_pct,
         "total_renewal_opportunity": total_renewal_opportunity,
     }
 
