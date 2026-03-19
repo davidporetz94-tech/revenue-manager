@@ -116,7 +116,8 @@ def generate_portfolio_trend_lines(properties: dict) -> dict:
     all_trends: dict[str, list] = {}
     for _name, pdata in properties.items():
         for code, ut_m in pdata["unit_type_metrics"].items():
-            trend = ut_m.get("trend_metrics", {}).get("occupancy_trend", [])
+            tm = ut_m.get("trend_metrics", {})
+            trend = tm.get("occupancy_trend", tm.get("occupancy_3mo_trend", []))
             if trend:
                 all_trends[code] = trend
     return {"unit_type_trends": all_trends}
