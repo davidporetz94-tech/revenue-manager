@@ -141,6 +141,10 @@ def compute_property_metrics(
     unit_types = db.query(UnitType).filter_by(property_id=property_id).all()
 
     zone_config = config.get("revenue_efficiency_zones", {})
+    occ_thresholds = config.get("occupancy_thresholds", {})
+    # Flow market occupancy target into efficiency scoring
+    if "market_occupancy" not in zone_config:
+        zone_config["market_occupancy"] = occ_thresholds.get("target_occupancy", 0.95)
     renewal_config = config.get("renewal_policy", {})
 
     all_metrics = []
@@ -217,6 +221,7 @@ def compute_property_metrics(
         # 6. Revenue efficiency score
         efficiency = compute_revenue_efficiency(
             metrics, optimal, snapshots_data, seasonal_context, zone_config,
+            revenue_gap=revenue_gap,
         )
 
         # Add new sections to the metrics dict

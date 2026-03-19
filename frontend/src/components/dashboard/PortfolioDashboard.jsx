@@ -28,10 +28,10 @@ function spreadColor(asking, comps) {
 }
 
 function scoreToGrade(score) {
-  if (score >= 80) return 'OPTIMIZED';
-  if (score >= 65) return 'OPPORTUNITY';
-  if (score >= 50) return 'IMBALANCED';
-  if (score >= 35) return 'DISTRESSED';
+  if (score >= 75) return 'OPTIMIZED';
+  if (score >= 60) return 'OPPORTUNITY';
+  if (score >= 45) return 'IMBALANCED';
+  if (score >= 30) return 'DISTRESSED';
   return 'CRISIS';
 }
 

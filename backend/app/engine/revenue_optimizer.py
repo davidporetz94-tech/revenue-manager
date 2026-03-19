@@ -629,13 +629,16 @@ def compute_revenue_efficiency(
     snapshot_trends: list[dict],
     seasonal_context: dict,
     zone_config: dict | None = None,
+    revenue_gap: dict | None = None,
 ) -> dict:
-    """Compute a unified revenue efficiency score (0-100) with 3 dimensions.
+    """Compute a unified revenue efficiency score (0-100) with 4 dimensions.
 
-    Replaces flag-count-based health scoring with a continuous, dynamically-
-    weighted composite score. The three dimensions are occupancy health,
-    pricing alignment, and rent roll momentum. Weights shift based on
-    occupancy zone and seasonal context.
+    Four dimensions: occupancy health, pricing alignment, rent roll momentum,
+    and revenue capture. Weights shift dynamically based on occupancy zone
+    and seasonal context.
+
+    The occupancy target is the client-configured market occupancy
+    (zone_config["market_occupancy"]), not a hardcoded value.
 
     Args:
         unit_type_metrics: Dict with occupancy_metrics, pricing_spreads.
@@ -643,6 +646,7 @@ def compute_revenue_efficiency(
         snapshot_trends: Monthly snapshots for trend analysis.
         seasonal_context: Dict with season, seasonal_factor, months_to_peak.
         zone_config: Optional zone boundary and weight config.
+        revenue_gap: Output from decompose_revenue_gap (optional).
 
     Returns:
         Dict with revenue_efficiency_score, grade, dimensions,
@@ -653,11 +657,12 @@ def compute_revenue_efficiency(
         "stressed_below": 0.89,
         "balanced_below": 0.94,
         "strong_below": 0.97,
-        "crisis_weights": [0.60, 0.15, 0.25],
-        "stressed_weights": [0.45, 0.30, 0.25],
-        "balanced_weights": [0.30, 0.35, 0.35],
-        "strong_weights": [0.15, 0.45, 0.40],
-        "full_weights": [0.10, 0.50, 0.40],
+        "market_occupancy": 0.95,
+        "crisis_weights": [0.50, 0.10, 0.20, 0.20],
+        "stressed_weights": [0.35, 0.25, 0.20, 0.20],
+        "balanced_weights": [0.25, 0.30, 0.25, 0.20],
+        "strong_weights": [0.10, 0.35, 0.30, 0.25],
+        "full_weights": [0.05, 0.35, 0.30, 0.30],
         "seasonal_weight_shift": 0.05,
     }
     if zone_config:
@@ -677,7 +682,7 @@ def compute_revenue_efficiency(
     zone, base_weights = _determine_zone_and_weights(actual_occ, config)
 
     # --- Apply seasonal weight shift ---
-    occ_w, pricing_w, momentum_w = base_weights
+    occ_w, pricing_w, momentum_w, gap_w = base_weights
     shift = config.get("seasonal_weight_shift", 0.05)
     weight_reason_parts = [f"zone={zone}"]
 
@@ -695,7 +700,9 @@ def compute_revenue_efficiency(
         weight_reason_parts.append("no seasonal shift")
 
     # --- Dimension 1: Occupancy Health ---
-    target_occ = 0.95 * seasonal_factor
+    # Use client-configured market occupancy, adjusted for season
+    market_occ = config.get("market_occupancy", 0.95)
+    target_occ = market_occ * seasonal_factor
     occ_score = max(0, min(100, int(_round_half_up(100 - (target_occ - actual_occ) * 500))))
 
     # --- Dimension 2: Pricing Alignment ---
@@ -710,11 +717,19 @@ def compute_revenue_efficiency(
         snapshot_trends, current_asking, optimal_asking,
     )
 
+    # --- Dimension 4: Revenue Capture ---
+    # Measures how much of the optimal revenue is actually being captured.
+    # A unit type can have high occupancy and perfect pricing alignment
+    # but still bleed revenue via loss-to-lease, vacancy cost, or suboptimal
+    # renewal pricing. This dimension catches that.
+    gap_score = _compute_revenue_gap_score(optimal, revenue_gap)
+
     # --- Composite score ---
     composite = (
         occ_score * occ_w
         + pricing_score * pricing_w
         + momentum_score * momentum_w
+        + gap_score * gap_w
     )
     final_score = max(0, min(100, int(_round_half_up(composite))))
 
@@ -728,9 +743,11 @@ def compute_revenue_efficiency(
             "occupancy_health": {"score": occ_score, "weight": _round_half_up(occ_w, 2)},
             "pricing_alignment": {"score": pricing_score, "weight": _round_half_up(pricing_w, 2)},
             "rent_roll_momentum": {"score": momentum_score, "weight": _round_half_up(momentum_w, 2)},
+            "revenue_capture": {"score": gap_score, "weight": _round_half_up(gap_w, 2)},
         },
         "dynamic_weights_reason": "; ".join(weight_reason_parts),
         "occupancy_zone": zone,
+        "market_occupancy_target": _round_half_up(target_occ, 3),
     }
 
 
@@ -749,7 +766,7 @@ def _determine_zone_and_weights(
         config: Zone config with boundaries and weight arrays.
 
     Returns:
-        Tuple of (zone_name, [occ_weight, pricing_weight, momentum_weight]).
+        Tuple of (zone_name, [occ_weight, pricing_weight, momentum_weight, gap_weight]).
     """
     crisis = config.get("crisis_below", 0.82)
     stressed = config.get("stressed_below", 0.89)
@@ -757,15 +774,77 @@ def _determine_zone_and_weights(
     strong = config.get("strong_below", 0.97)
 
     if occupancy < crisis:
-        return "CRISIS", list(config.get("crisis_weights", [0.60, 0.15, 0.25]))
+        w = list(config.get("crisis_weights", [0.50, 0.10, 0.20, 0.20]))
+        return "CRISIS", _ensure_4_weights(w)
     elif occupancy < stressed:
-        return "STRESSED", list(config.get("stressed_weights", [0.45, 0.30, 0.25]))
+        w = list(config.get("stressed_weights", [0.35, 0.25, 0.20, 0.20]))
+        return "STRESSED", _ensure_4_weights(w)
     elif occupancy < balanced:
-        return "BALANCED", list(config.get("balanced_weights", [0.30, 0.35, 0.35]))
+        w = list(config.get("balanced_weights", [0.25, 0.30, 0.25, 0.20]))
+        return "BALANCED", _ensure_4_weights(w)
     elif occupancy < strong:
-        return "STRONG", list(config.get("strong_weights", [0.15, 0.45, 0.40]))
+        w = list(config.get("strong_weights", [0.10, 0.35, 0.30, 0.25]))
+        return "STRONG", _ensure_4_weights(w)
     else:
-        return "FULL", list(config.get("full_weights", [0.10, 0.50, 0.40]))
+        w = list(config.get("full_weights", [0.05, 0.35, 0.30, 0.30]))
+        return "FULL", _ensure_4_weights(w)
+
+
+def _ensure_4_weights(weights: list[float]) -> list[float]:
+    """Ensure weight list has 4 elements for backward compatibility.
+
+    Old configs have 3 weights [occ, pricing, momentum]. This adds a
+    revenue_capture weight by redistributing from existing weights.
+
+    Args:
+        weights: List of 3 or 4 floats.
+
+    Returns:
+        List of 4 floats summing to ~1.0.
+    """
+    if len(weights) >= 4:
+        return weights[:4]
+    # Backward compat: add 4th weight by taking 0.20 from first two
+    occ, pricing, momentum = weights[0], weights[1], weights[2]
+    gap = 0.20
+    scale = (1.0 - gap) / (occ + pricing + momentum) if (occ + pricing + momentum) > 0 else 1.0
+    return [occ * scale, pricing * scale, momentum * scale, gap]
+
+
+def _compute_revenue_gap_score(
+    optimal: dict,
+    revenue_gap: dict | None = None,
+) -> int:
+    """Compute revenue capture score (0-100) from revenue gap data.
+
+    Measures how much of the optimal revenue is actually being captured.
+    A gap of 0% → 100, 10% → 50, 20%+ → 0. Uses the total revenue gap
+    relative to optimal monthly revenue.
+
+    Args:
+        optimal: Output from compute_optimal_price with revenue fields.
+        revenue_gap: Output from decompose_revenue_gap (optional).
+
+    Returns:
+        Integer score 0-100.
+    """
+    optimal_rev = optimal.get("optimal_revenue_monthly", 0)
+    if optimal_rev <= 0:
+        return 50  # baseline when no data
+
+    # Primary signal: revenue gap from optimizer
+    gap_monthly = abs(optimal.get("revenue_gap_monthly", 0))
+
+    # Secondary signal: if we have decomposed gap data, use total_gap
+    # which includes vacancy, repricing, renewal, and concession components
+    if revenue_gap:
+        total_gap = abs(revenue_gap.get("total_gap_monthly", gap_monthly))
+        gap_monthly = max(gap_monthly, total_gap)
+
+    gap_ratio = gap_monthly / optimal_rev
+    # 0% gap → 100, 10% → 70, 20% → 40, 33% → 0
+    score = 100 - gap_ratio * 300
+    return max(0, min(100, int(_round_half_up(score))))
 
 
 def _compute_momentum_score(
@@ -828,13 +907,13 @@ def _score_to_grade(score: int) -> str:
     Returns:
         Grade string: OPTIMIZED|OPPORTUNITY|IMBALANCED|DISTRESSED|CRISIS.
     """
-    if score >= 85:
+    if score >= 75:
         return "OPTIMIZED"
-    elif score >= 70:
+    elif score >= 60:
         return "OPPORTUNITY"
-    elif score >= 55:
+    elif score >= 45:
         return "IMBALANCED"
-    elif score >= 40:
+    elif score >= 30:
         return "DISTRESSED"
     else:
         return "CRISIS"
