@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import { runDiagnostic, getDiagnosticRun, getSlides, getConfig, previewDiagnosis, getPropertySummary } from '../../api/client';
-import { formatDollar, formatPercent, gradeColor } from '../../utils/format';
+import { formatDollar, formatPercent, gradeColor, gradeLabel } from '../../utils/format';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import ConfigEditor from '../config/ConfigEditor';
 import CompManagement from '../config/CompManagement';
@@ -283,7 +283,7 @@ function ReviewTab({ property, flagPreview, summaryData, diagLoading, diagStatus
                   <span className="font-mono font-semibold" style={{ color: d.asking > d.comps ? '#D97706' : '#059669' }}>
                     {d.asking >= d.comps ? '+' : ''}{formatDollar(d.asking - d.comps)}
                   </span>
-                  <span className="text-stone-400">Burn</span>
+                  <span className="text-stone-400">Cost</span>
                   <span className="font-mono font-semibold text-crisis">{formatDollar(d.dailyBurn)}/d</span>
                 </div>
               </div>
@@ -331,7 +331,7 @@ function ReviewTab({ property, flagPreview, summaryData, diagLoading, diagStatus
                         backgroundColor: gradeColor(a.grade) + '15',
                         color: gradeColor(a.grade),
                       }}>
-                        {a.grade}
+                        {gradeLabel(a.grade)}
                       </span>
                     </div>
                   </div>
@@ -561,7 +561,7 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
           <span className="font-mono text-xl font-bold text-stone-800">{propVacant} <span className="text-stone-400 text-sm">/ {propTotal}</span></span>
         </div>
         <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
-          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Daily Burn</p>
+          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Daily Vacancy Cost</p>
           <span className="font-mono text-xl font-bold text-crisis">{formatDollar(propBurn)}<span className="text-[10px] text-stone-400 ml-1">/day</span></span>
         </div>
         <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
@@ -661,7 +661,7 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
                   <span className="font-mono text-sm font-bold text-stone-700 block">{(d.demand * 100).toFixed(0)}%</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Daily Burn</span>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Daily Cost</span>
                   <span className="font-mono text-sm font-bold text-crisis block">{formatDollar(d.dailyBurn)}/day</span>
                 </div>
               </div>

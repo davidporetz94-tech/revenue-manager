@@ -23,10 +23,11 @@ INPUT CONTEXT:
 - Use these archetypes to frame your narrative:
   - HIGH OCC + UNDERPRICED: "push rents" — frame as upside capture opportunity
   - DECLINING OCC: "rebalance" — frame as pricing misalignment needing correction
-  - CRISIS: "fill" — frame as urgent vacancy bleed requiring immediate action
+  - CRISIS: "fill" — frame as vacancy that needs priority attention
   - PUZZLE (priced at comps but not leasing): "investigate + test" — frame as non-price friction
 
 STYLE RULES:
+- Professional consulting tone — direct, specific, never alarmist.
 - Address the client directly: "Your B1 units..." not "The B1 units..."
 - Confident, specific, data-driven. No hedging.
 - Plain text only — NO markdown formatting (no **bold**, no ## headers)
@@ -35,6 +36,9 @@ STYLE RULES:
 - Quantify recommendations using gap decomposition levers and dollar amounts.
 - Max 4 sentences per narrative block.
 - Max 25 words per bullet point.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Instead use: below target, needs attention, priority action, opportunity cost, underperforming.
+- Frame gaps as capturable revenue, not losses.
 
 Output ONLY valid JSON with this schema:
 {
@@ -56,6 +60,7 @@ INPUT CONTEXT:
 - Renewal capture opportunities have specific dollar amounts and turnover risk estimates.
 
 STYLE RULES:
+- Professional consulting tone — direct, specific, never alarmist.
 - Address the client directly
 - Use plain language: "If 2 of your 3 test units lease..." not "convergence criterion met"
 - Explain WHY each action is recommended using the revenue lever framework
@@ -63,6 +68,8 @@ STYLE RULES:
 - Frame renewals as a revenue capture opportunity, not just retention
 - Plain text only — NO markdown formatting
 - Max 4 sentences per narrative block
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Frame actions as recommendations, not emergencies.
 
 Output ONLY valid JSON with this schema:
 {
@@ -378,25 +385,25 @@ def _generate_fallback_narratives(diagnosis: dict, action_plan: dict, metrics: d
     if total_gap > 0:
         narratives["slide_7_narrative"] = (
             f"Your portfolio has ${total_gap:,.0f} per month in total revenue gap "
-            f"with ${total_daily:,.0f} per day in vacancy burn alone. "
+            f"with ${total_daily:,.0f} per day in vacancy cost alone. "
             f"The gap breaks down across FILL, REPRICE, RENEW, and DE_CONCESSION levers."
         )
     else:
         narratives["slide_7_narrative"] = (
-            f"Your portfolio is burning ${total_daily:,.0f} per day in vacancy costs, "
+            f"Your portfolio has ${total_daily:,.0f} per day in vacancy costs, "
             f"totaling ${total_monthly:,.0f} per month. "
-            f"Immediate action on the highest-burn unit types will reduce this exposure."
+            f"Priority action on the highest-cost unit types will reduce this exposure."
         )
 
     # Action plan slides — adapt framing to worst grade
     if worst_grade in ("CRISIS", "DISTRESSED"):
         narratives["slide_8_narrative"] = (
             "The 30-day plan prioritizes filling vacancies first, then optimizing pricing. "
-            "Phase 1 addresses the immediate bleed before moving to strategic positioning."
+            "Phase 1 addresses the vacancy cost before moving to strategic positioning."
         )
         narratives["slide_9_narrative"] = (
-            "Phase 1 focuses on immediate fill actions: price reductions and concessions "
-            "for the most distressed unit types."
+            "Phase 1 focuses on priority fill actions: price reductions and concessions "
+            "for the unit types that need the most attention."
         )
     elif worst_grade == "IMBALANCED":
         narratives["slide_8_narrative"] = (

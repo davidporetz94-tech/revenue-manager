@@ -21,7 +21,7 @@ function buildStarterQuestions(summaryData) {
   if (worst) questions.push(`Why is ${worst[0]} at ${Math.round(worst[1].occ * 100)}% occupancy?`);
   if (aboveComps) questions.push(`What happens if I cut ${aboveComps[0]} by $50?`);
   questions.push("Which unit type needs attention first?");
-  if (highBurn) questions.push(`How do I reduce the ${highBurn[0]} vacancy burn?`);
+  if (highBurn) questions.push(`How do I reduce the ${highBurn[0]} vacancy cost?`);
 
   return questions.slice(0, 4);
 }

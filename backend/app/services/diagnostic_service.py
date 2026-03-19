@@ -36,9 +36,9 @@ INPUT DATA YOU RECEIVE:
 Produce a JSON diagnosis with:
 1. Revenue efficiency score per unit type — USE the pre-computed `revenue_efficiency.revenue_efficiency_score` directly
 2. Grade from pre-computed `revenue_efficiency.grade`:
-   - CRISIS (0-39): Dominant vacancy, occupancy freefall
-   - DISTRESSED (40-54): Mixed vacancy + pricing pressure
-   - IMBALANCED (55-69): One dimension dragging performance
+   - CRISIS (0-39): Below-target occupancy requiring immediate attention
+   - DISTRESSED (40-54): Mixed vacancy and pricing pressure
+   - IMBALANCED (55-69): One dimension underperforming
    - OPPORTUNITY (70-84): Healthy occupancy, pricing upside exists
    - OPTIMIZED (85-100): Operating near the revenue frontier
 3. Root cause analysis: identify the DOMINANT revenue lever per unit type from `revenue_gap.dominant_lever`
@@ -55,6 +55,13 @@ CRITICAL RULES:
 - Quantify every recommendation using pre-computed gap_components (e.g., "$X/mo from FILL lever").
 - Cross-unit-type analysis: flag if repricing one unit type risks cannibalizing another (e.g., if cutting 2BR to near 1BR asking).
 - Never recommend experiments for unit types with < min_vacant_for_experiment vacant units.
+
+TONE GUIDANCE:
+- Use a professional consulting tone. Be direct and specific but NOT alarmist.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Instead use: below target, needs attention, priority action, opportunity cost, underperforming.
+- Frame gaps as capturable revenue, not losses. Say "This represents $X/month in capturable revenue" not "You're hemorrhaging $X/month."
+- Recommendations should use "We recommend..." not "You must urgently..."
 
 Action taxonomy:
 - Pricing: REDUCE_ASKING_RENT, INCREASE_ASKING_RENT, HOLD_ASKING_RENT
@@ -110,7 +117,7 @@ ACTION_PLAN_SYSTEM_PROMPT = """You are a senior multifamily revenue management s
 PHASE STRUCTURE ADAPTS TO THE DOMINANT PROBLEM (from the diagnosis grades):
 
 CRISIS/DISTRESSED (score < 55):
-- Phase 1 (Days 1-3): Fill — reduce asking, offer concessions, stop the bleed
+- Phase 1 (Days 1-3): Fill — reduce asking, offer concessions, address vacancy cost
 - Phase 2 (Days 4-14): Stabilize — monitor velocity, adjust if needed
 - Phase 3 (Days 15-21): Evaluate fill progress, begin pricing optimization
 - Phase 4 (Days 22-30): Optimize — renewals, remove concessions as occupancy recovers
@@ -139,6 +146,12 @@ CRITICAL RULES:
 - Phase 3 MUST include conditional branching (if experiment succeeded → X, else → Y)
 - Revenue gap figures come from the pre-computed gap_components — use them verbatim
 - Experiment designs must match the diagnosis recommendations exactly
+
+TONE GUIDANCE:
+- Use a professional consulting tone. Be direct and specific but NOT alarmist.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Instead use: below target, needs attention, priority action, opportunity cost, underperforming.
+- Frame actions as recommendations, not emergencies. Say "We recommend..." not "You must urgently..."
 
 Output ONLY valid JSON matching this schema:
 {
@@ -566,7 +579,7 @@ def _build_root_cause(
         return None
 
     lever_descriptions = {
-        "FILL": "Vacancy is the dominant revenue drain",
+        "FILL": "Vacancy is the primary revenue opportunity",
         "REPRICE": "Asking rent misalignment with optimal pricing",
         "RENEW": "In-place rent below market, addressable at renewal",
         "DE_CONCESSION": "Active concessions reducing effective rent",
@@ -680,7 +693,7 @@ def _build_fallback_actions(
             "action_type": "FREEZE_RENEWAL_INCREASES",
             "lever": "RENEW",
             "priority": priority,
-            "description": "Freeze all renewal increases during crisis",
+            "description": "Freeze renewal increases during stabilization period",
             "target_value": None,
             "expected_impact_monthly": 0,
             "confidence": "HIGH",

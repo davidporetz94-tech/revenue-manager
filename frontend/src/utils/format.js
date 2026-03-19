@@ -9,6 +9,23 @@ export function formatPercent(value) {
   return value.toFixed(1) + '%';
 }
 
+export function gradeLabel(grade) {
+  const labels = {
+    // Legacy 4-zone
+    CRITICAL: 'NEEDS ATTENTION',
+    ACTION_NEEDED: 'UNDERPERFORMING',
+    WATCH: 'ADJUSTING',
+    HEALTHY: 'OPTIMIZED',
+    // New 5-zone
+    CRISIS: 'NEEDS ATTENTION',
+    DISTRESSED: 'UNDERPERFORMING',
+    IMBALANCED: 'ADJUSTING',
+    OPPORTUNITY: 'OPPORTUNITY',
+    OPTIMIZED: 'OPTIMIZED',
+  };
+  return labels[grade] || grade;
+}
+
 export function gradeColor(grade) {
   const colors = {
     // Legacy 4-zone

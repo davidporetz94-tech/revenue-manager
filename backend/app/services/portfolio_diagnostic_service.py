@@ -30,15 +30,21 @@ Produce a JSON diagnosis with:
 
 SCORING RUBRIC:
 - Multiple properties with CRITICAL flags, high vacancy → score 15-30
-- One property in crisis, others stable → score 35-50
-- All properties have concerns but no crisis → score 50-65
+- One property below target, others stable → score 35-50
+- All properties have concerns but none below target → score 50-65
 - Minor issues across portfolio → score 65-80
 - All properties healthy → score 80-95
 
 CRITICAL RULES:
 - Every dollar amount must come from the pre-computed facts. Do NOT invent numbers.
-- Rank properties by urgency (daily burn rate is the primary signal)
+- Rank properties by priority (daily burn rate is the primary signal)
 - Identify patterns that appear across multiple properties
+
+TONE GUIDANCE:
+- Use a professional consulting tone. Be direct and specific but NOT alarmist.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Instead use: below target, needs attention, priority action, opportunity cost, underperforming.
+- Frame gaps as capturable revenue, not losses.
 
 Output ONLY valid JSON matching this schema:
 {
@@ -67,7 +73,7 @@ Output ONLY valid JSON matching this schema:
 PORTFOLIO_ACTION_PLAN_SYSTEM_PROMPT = """You are a senior multifamily revenue management strategist creating a 30-day action plan for a multi-property portfolio. Actions must be prioritized ACROSS properties by impact (daily burn reduction).
 
 The plan has 4 phases:
-- Phase 1 (Days 1-3): Immediate stabilization — address highest-burn properties first
+- Phase 1 (Days 1-3): Priority actions — address highest-impact properties first
 - Phase 2 (Days 4-14): Calibrate & optimize across all properties
 - Phase 3 (Days 15-21): Evaluate experiments, branch based on outcomes
 - Phase 4 (Days 22-30): Lock strategies
@@ -77,6 +83,12 @@ CRITICAL RULES:
 - Actions must specify which property AND unit type they apply to
 - Rank Phase 1 actions by daily burn impact (highest first)
 - Phase 3 must include conditional branching per property
+
+TONE GUIDANCE:
+- Use a professional consulting tone. Be direct and specific but NOT alarmist.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Instead use: below target, needs attention, priority action, opportunity cost, underperforming.
+- Frame actions as recommendations, not emergencies.
 
 Output ONLY valid JSON matching this schema:
 {
@@ -381,7 +393,7 @@ def _fallback_portfolio_action_plan(portfolio_metrics: dict) -> dict:
     agg = portfolio_metrics["aggregate"]
     return {
         "phases": [
-            {"phase_number": 1, "name": "Immediate Stabilization", "days": "1-3", "actions": []},
+            {"phase_number": 1, "name": "Priority Actions", "days": "1-3", "actions": []},
             {"phase_number": 2, "name": "Calibration", "days": "4-14", "actions": []},
             {"phase_number": 3, "name": "Decision Point", "days": "15-21", "actions": []},
             {"phase_number": 4, "name": "Optimization", "days": "22-30", "actions": []},

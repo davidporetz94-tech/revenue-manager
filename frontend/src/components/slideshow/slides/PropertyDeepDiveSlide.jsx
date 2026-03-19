@@ -1,6 +1,6 @@
 import React from 'react';
 import RentWaterfall from '../charts/RentWaterfall';
-import { gradeColor } from '../../../utils/format';
+import { gradeColor, gradeLabel } from '../../../utils/format';
 
 export default function PropertyDeepDiveSlide({ slide }) {
   const viz = slide.viz_data || {};
@@ -28,7 +28,7 @@ export default function PropertyDeepDiveSlide({ slide }) {
                 className="text-xs font-bold px-2 py-0.5 rounded"
                 style={{ backgroundColor: gradeColor(card.grade) + '20', color: gradeColor(card.grade) }}
               >
-                {card.grade}
+                {gradeLabel(card.grade)}
               </span>
             </div>
             <div className="text-2xl font-bold mt-2" style={{ color: gradeColor(card.grade) }}>

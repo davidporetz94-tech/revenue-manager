@@ -21,6 +21,7 @@ INPUT CONTEXT:
 - Properties ranked by revenue gap (largest first).
 
 STYLE RULES:
+- Professional consulting tone — direct, specific, never alarmist.
 - Address the client directly: "Your portfolio..." not "The portfolio..."
 - Confident, specific, data-driven. No hedging.
 - Plain text only. NO markdown formatting.
@@ -28,6 +29,8 @@ STYLE RULES:
 - Reference revenue efficiency grades, not just occupancy or vacancy.
 - Quantify everything using gap decomposition and renewal capture amounts.
 - Max 4 sentences per narrative block.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Frame gaps as capturable revenue, not losses.
 
 Output ONLY valid JSON with this schema:
 {
@@ -46,11 +49,14 @@ INPUT CONTEXT:
 - Actions ranked by revenue impact (largest first).
 
 STYLE RULES:
+- Professional consulting tone — direct, specific, never alarmist.
 - Address the client directly.
 - Frame actions by revenue lever: FILL, REPRICE, RENEW, DE_CONCESSION.
 - Reference dollar amounts from the pre-computed data.
 - Plain text only. NO markdown formatting.
 - Max 4 sentences per narrative block.
+- Avoid words like: hemorrhaging, bleeding, crisis, dire, desperate, catastrophic, freefall.
+- Frame actions as recommendations, not emergencies.
 
 Output ONLY valid JSON with this schema:
 {

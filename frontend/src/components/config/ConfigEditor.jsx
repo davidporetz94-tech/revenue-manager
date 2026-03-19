@@ -8,13 +8,13 @@ const SECTIONS = [
     { key: 'push_pricing_above', label: 'Push Pricing Above', min: 0.90, max: 0.99, step: 0.01, format: 'pct' },
     { key: 'concern_below', label: 'Concern Below', min: 0.85, max: 0.95, step: 0.01, format: 'pct' },
     { key: 'action_below', label: 'Action Below', min: 0.80, max: 0.92, step: 0.01, format: 'pct' },
-    { key: 'crisis_below', label: 'Crisis Below', min: 0.70, max: 0.85, step: 0.01, format: 'pct' },
+    { key: 'crisis_below', label: 'Attention Below', min: 0.70, max: 0.85, step: 0.01, format: 'pct' },
   ]},
   { key: 'exposure_thresholds', label: 'Exposure Thresholds', fields: [
     { key: 'green_below', label: 'Green Below', min: 0.02, max: 0.10, step: 0.01, format: 'pct' },
     { key: 'caution_below', label: 'Caution Below', min: 0.05, max: 0.15, step: 0.01, format: 'pct' },
     { key: 'action_below', label: 'Action Below', min: 0.10, max: 0.25, step: 0.01, format: 'pct' },
-    { key: 'crisis_above', label: 'Crisis Above', min: 0.15, max: 0.35, step: 0.01, format: 'pct' },
+    { key: 'crisis_above', label: 'Attention Above', min: 0.15, max: 0.35, step: 0.01, format: 'pct' },
   ]},
   { key: 'pricing_tolerance', label: 'Pricing Tolerance', fields: [
     { key: 'max_premium_vs_comps_pct', label: 'Max Premium vs Comps', min: 0.02, max: 0.15, step: 0.01, format: 'pct' },

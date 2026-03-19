@@ -233,11 +233,11 @@ export default function PortfolioDashboard({ properties, onSelectProperty, onSho
           </div>
         </div>
 
-        {/* Hero KPI — Daily Burn prominent */}
+        {/* Hero KPI — Daily Vacancy Cost prominent */}
         <div className="bg-white rounded-xl border border-stone-200 p-6 shadow-card mb-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-stone-400 font-semibold uppercase tracking-wider mb-1">Portfolio Daily Burn</p>
+              <p className="text-xs text-stone-400 font-semibold uppercase tracking-wider mb-1">Portfolio Daily Vacancy Cost</p>
               <div className="flex items-baseline gap-2">
                 <span className="font-mono text-4xl font-bold text-crisis">{formatDollar(kpis.dailyBurn)}</span>
                 <span className="text-sm text-stone-400">/day</span>
