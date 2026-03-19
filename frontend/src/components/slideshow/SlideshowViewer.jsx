@@ -120,7 +120,7 @@ export default function SlideshowViewer({ slideDeck, propertyName, onExit }) {
           }`}
           style={{ minHeight: '540px' }}
         >
-          {slide.slide_type !== 'TITLE' && (
+          {slide.slide_type !== 'TITLE' && slide.slide_type !== 'PORTFOLIO_TITLE' && (
             <div className="border-b border-stone-100 px-8 py-4 flex items-center justify-between">
               <h3 className="font-display text-lg text-stone-900">{slide.title}</h3>
               <span className="font-mono text-[10px] text-stone-300 uppercase tracking-widest">
@@ -129,7 +129,7 @@ export default function SlideshowViewer({ slideDeck, propertyName, onExit }) {
             </div>
           )}
 
-          <div className="p-8" style={{ minHeight: slide.slide_type === 'TITLE' ? '540px' : '460px' }}>
+          <div className="p-8" style={{ minHeight: (slide.slide_type === 'TITLE' || slide.slide_type === 'PORTFOLIO_TITLE') ? '540px' : '460px' }}>
             <SlideComponent slide={slide} />
           </div>
         </div>

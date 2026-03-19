@@ -8,10 +8,36 @@ from app.services.portfolio_viz_data_service import (
     generate_property_ranking_cards,
     generate_portfolio_trend_lines,
     generate_portfolio_stacked_bar,
+    generate_portfolio_revenue_gap_waterfall,
     generate_property_rent_waterfall,
     generate_property_line_charts,
+    generate_portfolio_timeline,
+    generate_portfolio_action_cards,
+    generate_portfolio_flowcharts,
+    generate_portfolio_investigation_table,
+    generate_portfolio_before_after,
 )
 from app.services.portfolio_narrative_service import generate_portfolio_narratives
+
+
+def _score_card_grade(occupancy: float) -> str:
+    """Map occupancy to a grade label for display."""
+    if occupancy >= 0.95:
+        return "OPTIMIZED"
+    if occupancy >= 0.90:
+        return "OPPORTUNITY"
+    if occupancy >= 0.85:
+        return "ADJUSTING"
+    if occupancy >= 0.80:
+        return "DISTRESSED"
+    return "CRISIS"
+
+
+def _score_card_score(occupancy: float, daily_burn: float) -> int:
+    """Compute a display score from occupancy and daily burn."""
+    occ_score = min(occupancy * 100, 100)
+    burn_penalty = min(daily_burn / 10, 30)
+    return max(0, round(occ_score - burn_penalty))
 
 
 def assemble_portfolio_slide_deck(
@@ -59,13 +85,14 @@ def assemble_portfolio_slide_deck(
     })
 
     # Slide 2: Executive Summary
+    # Frontend reads narrative.key_findings (not findings)
     slides.append({
         "slide_number": 2,
         "slide_type": "PORTFOLIO_EXECUTIVE_SUMMARY",
         "title": "Executive Summary",
         "narrative": {
             "headline": narratives.get("slide_2_headline", ""),
-            "findings": narratives.get("slide_2_findings", []),
+            "key_findings": narratives.get("slide_2_findings", []),
         },
         "viz_data": {
             "score_gauge": generate_portfolio_score_gauge(diagnosis, aggregate),
@@ -118,18 +145,23 @@ def assemble_portfolio_slide_deck(
     })
 
     # Slide 6: Revenue at Risk
+    # Frontend reads viz.revenue_gap_waterfall (segments) and narrative.analysis
+    stacked_bar = generate_portfolio_stacked_bar(properties)
     slides.append({
         "slide_number": 6,
         "slide_type": "PORTFOLIO_REVENUE_AT_RISK",
         "title": "Revenue at Risk",
-        "narrative": {"text": narratives.get("slide_6_narrative", "")},
+        "narrative": {"analysis": narratives.get("slide_6_narrative", "")},
         "viz_data": {
-            "stacked_bar": generate_portfolio_stacked_bar(properties),
+            "stacked_bar": stacked_bar,
             "daily_burn": {
                 "daily_amount": round(aggregate.get("total_monthly_vacancy_cost", 0) / 30, 2),
                 "monthly_amount": aggregate.get("total_monthly_vacancy_cost", 0),
                 "annual_amount": aggregate.get("total_monthly_vacancy_cost", 0) * 12,
             },
+            "revenue_gap_waterfall": generate_portfolio_revenue_gap_waterfall(
+                stacked_bar, aggregate
+            ),
             "revenue_gap_total": aggregate.get("total_revenue_gap", 0),
             "revenue_efficiency": aggregate.get("portfolio_revenue_efficiency", 0),
         },
@@ -145,6 +177,7 @@ def assemble_portfolio_slide_deck(
         ut_metrics = pdata["unit_type_metrics"]
 
         # Deep dive slide (waterfalls)
+        # Frontend reads card.grade, card.score, card.key_metric and narrative.analysis
         viz: dict = {"score_cards": []}
         for code, m in ut_metrics.items():
             ps = m["pricing_spreads"]
@@ -156,18 +189,28 @@ def assemble_portfolio_slide_deck(
                 ps["asking_rent"],
                 ps["comps_rent"],
             )
+            occ = m["occupancy_metrics"]["occupancy_rate"]
+            daily_burn = m["revenue_metrics"]["daily_vacancy_burn"]
+            vacant = m["occupancy_metrics"]["vacant"]
             viz["score_cards"].append({
                 "unit_type": code,
-                "occupancy": m["occupancy_metrics"]["occupancy_rate"],
-                "vacant": m["occupancy_metrics"]["vacant"],
-                "daily_burn": m["revenue_metrics"]["daily_vacancy_burn"],
+                "occupancy": occ,
+                "vacant": vacant,
+                "daily_burn": daily_burn,
+                "grade": _score_card_grade(occ),
+                "score": _score_card_score(occ, daily_burn),
+                "key_metric": (
+                    f"{round(occ * 100)}% occupancy, "
+                    f"{vacant} vacant, "
+                    f"${daily_burn}/day burn"
+                ),
             })
 
         slides.append({
             "slide_number": slide_num,
             "slide_type": "PROPERTY_DEEP_DIVE",
             "title": f"{prop_name} Deep Dive",
-            "narrative": {"text": f"{prop_name} unit type analysis."},
+            "narrative": {"analysis": f"{prop_name} unit type analysis."},
             "viz_data": viz,
             "layout": {
                 "template": "property_deep_dive",
@@ -176,13 +219,13 @@ def assemble_portfolio_slide_deck(
         })
         slide_num += 1
 
-        # Trend slide for this property
+        # Trend slide for this property — use TREND_ANALYSIS type
         trend_viz = generate_property_line_charts(ut_metrics)
         slides.append({
             "slide_number": slide_num,
-            "slide_type": "PROPERTY_DEEP_DIVE",
+            "slide_type": "TREND_ANALYSIS",
             "title": f"{prop_name} Trends",
-            "narrative": {"text": f"{prop_name} 4-month trend analysis."},
+            "narrative": {"analysis": f"{prop_name} 4-month trend analysis."},
             "viz_data": {"line_charts": trend_viz},
             "layout": {
                 "template": "trend_analysis",
@@ -192,12 +235,17 @@ def assemble_portfolio_slide_deck(
         slide_num += 1
 
     # Action Plan slides
+    phases = action_plan.get("phases", [])
+    # Slide 11: Action Plan Overview — frontend reads viz.timeline
     slides.append({
         "slide_number": slide_num,
         "slide_type": "PORTFOLIO_ACTION_PLAN",
         "title": "30-Day Portfolio Action Plan",
-        "narrative": {"text": narratives.get("slide_11_narrative", "")},
-        "viz_data": {"phases": action_plan.get("phases", [])},
+        "narrative": {"overview": narratives.get("slide_11_narrative", "")},
+        "viz_data": {
+            "timeline": generate_portfolio_timeline(phases),
+            "phases": phases,
+        },
         "layout": {
             "template": "action_plan",
             "components": ["timeline", "narrative"],
@@ -205,17 +253,16 @@ def assemble_portfolio_slide_deck(
     })
     slide_num += 1
 
+    # Slide 12: Phase 1 Detail — frontend reads viz.action_cards and narrative.detail
+    phase1_actions = phases[0].get("actions", []) if phases else []
     slides.append({
         "slide_number": slide_num,
         "slide_type": "PORTFOLIO_PHASE_DETAIL",
         "title": "Phase 1: Immediate Actions",
-        "narrative": {"text": narratives.get("slide_12_narrative", "")},
+        "narrative": {"detail": narratives.get("slide_12_narrative", "")},
         "viz_data": {
-            "actions": (
-                action_plan.get("phases", [{}])[0]
-                if action_plan.get("phases")
-                else {}
-            ).get("actions", []),
+            "action_cards": generate_portfolio_action_cards(phase1_actions),
+            "actions": phase1_actions,
         },
         "layout": {
             "template": "phase_detail",
@@ -224,12 +271,15 @@ def assemble_portfolio_slide_deck(
     })
     slide_num += 1
 
+    # Slide 13: Decision Point — frontend reads viz.flowcharts and narrative.explanation
     slides.append({
         "slide_number": slide_num,
         "slide_type": "PORTFOLIO_DECISION_POINT",
         "title": "Day 15 Decision Points",
-        "narrative": {"text": narratives.get("slide_13_narrative", "")},
-        "viz_data": {},
+        "narrative": {"explanation": narratives.get("slide_13_narrative", "")},
+        "viz_data": {
+            "flowcharts": generate_portfolio_flowcharts(phases),
+        },
         "layout": {
             "template": "decision_tree",
             "components": ["flowchart", "narrative"],
@@ -237,12 +287,17 @@ def assemble_portfolio_slide_deck(
     })
     slide_num += 1
 
+    # Slide 14: Investigation — frontend reads viz.investigation_table and narrative.overview
     slides.append({
         "slide_number": slide_num,
         "slide_type": "PORTFOLIO_INVESTIGATION",
         "title": "Further Investigation",
-        "narrative": {"text": narratives.get("slide_14_narrative", "")},
-        "viz_data": {},
+        "narrative": {"overview": narratives.get("slide_14_narrative", "")},
+        "viz_data": {
+            "investigation_table": generate_portfolio_investigation_table(
+                properties, diagnosis
+            ),
+        },
         "layout": {
             "template": "investigation",
             "components": ["table", "narrative"],
@@ -250,12 +305,14 @@ def assemble_portfolio_slide_deck(
     })
     slide_num += 1
 
+    # Slide 15: Summary — frontend reads viz.before_after and narrative.summary
     slides.append({
         "slide_number": slide_num,
         "slide_type": "PORTFOLIO_SUMMARY",
         "title": "Summary & Next Steps",
-        "narrative": {"text": narratives.get("slide_15_summary", "")},
+        "narrative": {"summary": narratives.get("slide_15_summary", "")},
         "viz_data": {
+            "before_after": generate_portfolio_before_after(aggregate),
             "daily_burn": round(aggregate.get("total_monthly_vacancy_cost", 0) / 30, 2),
             "monthly_cost": aggregate.get("total_monthly_vacancy_cost", 0),
             "property_count": len(properties),

@@ -8,10 +8,10 @@ export default function SummarySlide({ slide }) {
 
   return (
     <div className="h-full flex flex-col gap-6 p-2">
-      {narrative.summary && (
+      {(narrative.summary || narrative.text) && (
         <div className="bg-teal-50 rounded-lg p-4 border border-teal-200">
           <p className="text-sm text-teal-800 font-medium leading-relaxed">
-            {narrative.summary}
+            {narrative.summary || narrative.text}
           </p>
         </div>
       )}
