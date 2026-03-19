@@ -18,8 +18,10 @@ export default function PropertyComparisonSlide({ slide }) {
               <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Units</th>
               <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Occupancy</th>
               <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Vacant</th>
-              <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Daily Burn</th>
+              <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Daily Cost</th>
               <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Monthly Cost</th>
+              <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Rev Gap</th>
+              <th className="text-right py-2 px-3 text-xs font-semibold text-stone-500 uppercase">Efficiency</th>
             </tr>
           </thead>
           <tbody>
@@ -33,6 +35,12 @@ export default function PropertyComparisonSlide({ slide }) {
                 <td className="py-3 px-3 text-right font-mono text-stone-600">{row.vacant}</td>
                 <td className="py-3 px-3 text-right font-mono text-crisis">{formatDollar(row.daily_burn)}</td>
                 <td className="py-3 px-3 text-right font-mono text-stone-600">{formatDollar(row.monthly_cost)}</td>
+                <td className="py-3 px-3 text-right font-mono" style={{ color: row.revenue_gap > 5000 ? '#DC2626' : row.revenue_gap > 2000 ? '#D97706' : '#059669' }}>
+                  {formatDollar(row.revenue_gap || 0)}/mo
+                </td>
+                <td className="py-3 px-3 text-right font-mono" style={{ color: row.revenue_efficiency >= 70 ? '#059669' : row.revenue_efficiency >= 55 ? '#D97706' : '#DC2626' }}>
+                  {Math.round(row.revenue_efficiency || 0)}%
+                </td>
               </tr>
             ))}
           </tbody>
