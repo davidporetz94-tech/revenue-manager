@@ -146,4 +146,50 @@ export async function getPortfolioDiagnosticHistory() {
   return res.data;
 }
 
+export async function createPricingDecision(decision) {
+  const res = await api.post('/pricing-decisions', decision);
+  return res.data;
+}
+
+export async function getPricingDecisions(params = {}) {
+  const res = await api.get('/pricing-decisions', { params });
+  return res.data;
+}
+
+export async function getLatestDecisions(propertyId, decisionType = 'PRICING') {
+  const res = await api.get('/pricing-decisions/latest', {
+    params: { property_id: propertyId, decision_type: decisionType },
+  });
+  return res.data;
+}
+
+export async function createBatchDecisions(decisions) {
+  const res = await api.post('/pricing-decisions/batch', { decisions });
+  return res.data;
+}
+
+export async function getExpiringLeases(propertyId, targetMonth) {
+  const res = await api.get('/renewals/expiring', {
+    params: { property_id: propertyId, target_month: targetMonth },
+  });
+  return res.data;
+}
+
+export async function previewRenewalPricing(params) {
+  const res = await api.post('/renewals/preview', params);
+  return res.data;
+}
+
+export async function saveRenewalRule(rule) {
+  const res = await api.post('/renewal-rules', rule);
+  return res.data;
+}
+
+export async function getRenewalRules(propertyId, targetMonth) {
+  const params = { property_id: propertyId };
+  if (targetMonth) params.target_month = targetMonth;
+  const res = await api.get('/renewal-rules', { params });
+  return res.data;
+}
+
 export default api;

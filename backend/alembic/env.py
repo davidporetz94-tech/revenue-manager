@@ -13,6 +13,8 @@ from app.models import (  # noqa: F401 — ensure all models registered
     HistoricalSnapshot,
     DiagnosticRun, AuditLog,
     Experiment, ExperimentAssignment,
+    PricingDecision,
+    RenewalRule, RenewalOutput,
 )
 
 config = context.config

@@ -127,13 +127,20 @@ def get_property_summary(property_id: str, db: Session = Depends(get_db)):
 
     # Build frontend-friendly unit type data
     unit_types = {}
-    for code, m in metrics["unit_type_metrics"].items():
+    ut_metrics = metrics["unit_type_metrics"]
+    for code, m in ut_metrics.items():
         occ = m["occupancy_metrics"]
         exp = m["exposure_metrics"]
         ps = m["pricing_spreads"]
         rev = m["revenue_metrics"]
         vel = m["velocity_metrics"]
         dem = m["demand_metrics"]
+        re = m.get("revenue_efficiency", {})
+        op = m.get("optimal_pricing", {})
+        rg = m.get("revenue_gap", {})
+        ltl = m.get("ltl_analysis", {})
+        ren = m.get("renewal_opportunity", {})
+        el = m.get("elasticity", {})
 
         unit_types[code] = {
             "total": m["identity"]["total_units"],
@@ -155,6 +162,26 @@ def get_property_summary(property_id: str, db: Session = Depends(get_db)):
             "dailyBurn": rev["daily_vacancy_burn"],
             "monthlyCost": rev["monthly_vacancy_cost"],
             "property": prop.name,
+            # Revenue intelligence
+            "revenueEfficiency": re.get("revenue_efficiency_score"),
+            "grade": re.get("grade"),
+            "optimalAsking": op.get("optimal_asking"),
+            "priceDirection": op.get("price_direction"),
+            "recommendedAsking": op.get("recommended_asking"),
+            "revenueGapMonthly": rg.get("total_gap_monthly"),
+            "dominantLever": rg.get("dominant_lever"),
+            "revenueGapComponents": rg.get("gap_components"),
+            "ltlDollars": ltl.get("ltl_dollars", 0),
+            "ltlPct": ltl.get("ltl_pct", 0),
+            "renewalCount90d": ren.get("upcoming_renewals_90d", 0),
+            "renewalCaptureAnnual": ren.get("net_annual_capture", 0),
+            "renewalIncreasePct": ren.get("recommended_increase_pct", 0),
+            "renewalIncreaseDollars": ren.get("recommended_increase_dollars", 0),
+            "renewalTurnoverRisk": ren.get("estimated_turnover_probability", 0),
+            "renewalConfidence": ren.get("confidence"),
+            "pricingConfidence": op.get("confidence"),
+            "elasticityDirection": el.get("direction"),
+            "elasticityConfidence": el.get("confidence"),
         }
 
     # Build trend data from snapshots
@@ -176,11 +203,39 @@ def get_property_summary(property_id: str, db: Session = Depends(get_db)):
                 "occ": s.occupancy_rate,
                 "asking": s.avg_asking_rent,
                 "comps": s.comps_avg,
+                "executed": s.avg_executed_rent,
+                "inPlace": s.avg_in_place_rent,
             })
         trends[ut.code] = trend_points
 
+    # Compute portfolio-level revenue intelligence
+    total_units_sum = sum(
+        m["identity"]["total_units"] for m in ut_metrics.values()
+    )
+    portfolio_rev_eff = 0.0
+    if total_units_sum > 0:
+        portfolio_rev_eff = sum(
+            (m.get("revenue_efficiency", {}).get("revenue_efficiency_score", 0) or 0)
+            * m["identity"]["total_units"]
+            for m in ut_metrics.values()
+        ) / total_units_sum
+    total_revenue_gap = sum(
+        (m.get("revenue_gap", {}).get("total_gap_monthly", 0) or 0)
+        for m in ut_metrics.values()
+    )
+    total_renewal_opportunity = sum(
+        (m.get("renewal_opportunity", {}).get("net_annual_capture", 0) or 0)
+        for m in ut_metrics.values()
+    )
+
+    portfolio_base = metrics.get("portfolio_metrics", {})
     return {
         "unit_types": unit_types,
         "trends": trends,
-        "portfolio": metrics.get("portfolio_metrics", {}),
+        "portfolio": {
+            **portfolio_base,
+            "portfolio_revenue_efficiency": round(portfolio_rev_eff),
+            "total_revenue_gap": total_revenue_gap,
+            "total_renewal_opportunity": total_renewal_opportunity,
+        },
     }
