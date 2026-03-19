@@ -221,14 +221,19 @@ def aggregate_cross_property(
             weighted_score_sum += score * ut_units
             weighted_unit_count += ut_units
 
-    portfolio_rev_efficiency = (
+    composite_score = (
         round_half_up(weighted_score_sum / weighted_unit_count, 1)
         if weighted_unit_count > 0 else 0.0
     )
-    # Also keep the raw revenue capture ratio for reference
     revenue_capture_pct = (
         round_half_up(safe_divide(total_current_revenue, total_optimal_revenue) * 100, 1)
         if total_optimal_revenue > 0 else 0.0
+    )
+    # Blend: 60% composite score (captures occupancy/pricing/momentum quality)
+    # + 40% revenue capture ratio (captures actual dollar performance)
+    # This prevents both extremes: pure ratio ignores problems, pure composite is too punitive
+    portfolio_rev_efficiency = round_half_up(
+        composite_score * 0.6 + revenue_capture_pct * 0.4, 1
     )
 
     blended_occ = round_half_up(
