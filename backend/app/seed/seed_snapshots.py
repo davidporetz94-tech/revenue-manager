@@ -12,6 +12,8 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
+from app.engine.utils import round_half_up
+
 from app.models.snapshot import HistoricalSnapshot
 
 
@@ -137,7 +139,7 @@ def seed_snapshots(db: Session, ids: dict) -> None:
         total = data["total"]
         for m in data["months"]:
             occ_rate = m["occ"]
-            occupied = round(total * occ_rate)
+            occupied = int(round_half_up(total * occ_rate))
             vacant = total - occupied
             # Approximate on_notice (1 for most, 0 for B2 March)
             on_notice_est = 1 if code != "B2" else 0

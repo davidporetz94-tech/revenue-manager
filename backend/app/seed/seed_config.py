@@ -12,7 +12,7 @@ DEFAULT_CONFIG = {
         "push_pricing_above": 0.96,
         "concern_below": 0.92,
         "action_below": 0.88,
-        "crisis_below": 0.82,
+        "crisis_below": 0.85,
     },
     "exposure_thresholds": {
         "green_below": 0.05,

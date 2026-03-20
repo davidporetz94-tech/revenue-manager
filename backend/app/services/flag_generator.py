@@ -56,7 +56,7 @@ def generate_flags(metrics: dict, config: dict) -> list[dict]:
             "threshold": occ_t.get("push_pricing_above"),
             "severity": "HIGH",
         })
-    elif occ < occ_t.get("crisis_below", 0.82):
+    elif occ < occ_t.get("crisis_below", 0.85):
         flags.append({
             "type": "OCCUPANCY_CRISIS",
             "value": occ,
@@ -107,7 +107,7 @@ def generate_flags(metrics: dict, config: dict) -> list[dict]:
             "type": "EXPOSURE_DETERIORATING",
             "value": {"30d": exp_30d, "90d": exp_90d},
             "threshold": "90d > 30d",
-            "severity": "HIGH",
+            "severity": "CRITICAL",
         })
 
     # --- Pricing flags ---

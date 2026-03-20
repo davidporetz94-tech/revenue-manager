@@ -9,17 +9,10 @@ from app.models.property import Property, UnitType, Unit
 from app.models.config import ClientConfig
 from app.models.snapshot import HistoricalSnapshot
 from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 from app.services.metrics_engine import compute_property_metrics
 
 router = APIRouter(prefix="/api/v1", tags=["properties"])
-
-
-def _get_demo_user(db: Session) -> User:
-    user = db.query(User).filter_by(email="demo@example.com").first()
-    if not user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    return user
 
 
 def _compute_property_summary(db: Session, prop: Property) -> dict:
@@ -60,9 +53,11 @@ def _compute_property_summary(db: Session, prop: Property) -> dict:
 
 
 @router.get("/properties")
-def list_properties(db: Session = Depends(get_db)):
+def list_properties(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """List all properties with summary KPIs."""
-    user = _get_demo_user(db)
     props = db.query(Property).filter_by(organization_id=user.organization_id).all()
     result = []
     for p in props:
@@ -82,11 +77,13 @@ def list_properties(db: Session = Depends(get_db)):
 
 
 @router.get("/properties/{property_id}")
-def get_property(property_id: str, db: Session = Depends(get_db)):
+def get_property(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get a single property by ID."""
-    prop = db.query(Property).filter_by(id=property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = verify_property_access(db, property_id, user)
     return {
         "id": str(prop.id),
         "name": prop.name,
@@ -100,14 +97,16 @@ def get_property(property_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/properties/{property_id}/summary")
-def get_property_summary(property_id: str, db: Session = Depends(get_db)):
+def get_property_summary(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get detailed unit type metrics and trends for a property.
 
     Returns data needed by the frontend dashboard and overview tabs.
     """
-    prop = db.query(Property).filter_by(id=property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = verify_property_access(db, property_id, user)
 
     config = db.query(ClientConfig).filter_by(
         property_id=property_id, is_active=True

@@ -12,7 +12,7 @@ from app.models.property import Property
 from app.models.config import ClientConfig
 from app.models.diagnostic import DiagnosticRun, AuditLog
 from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 from app.services.metrics_engine import compute_property_metrics
 from app.services.flag_generator import generate_flags
 from app.services.claude_client import ClaudeClient, ClaudeAPIError
@@ -58,9 +58,7 @@ def chat(
     user: User = Depends(get_current_user),
 ) -> ChatResponse:
     """Chat with AI about property pricing metrics."""
-    prop = db.query(Property).filter_by(id=property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = verify_property_access(db, property_id, user)
 
     config = db.query(ClientConfig).filter_by(
         property_id=property_id, is_active=True

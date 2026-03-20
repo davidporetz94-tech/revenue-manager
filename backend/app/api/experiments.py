@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.diagnostic import AuditLog
 from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 
 router = APIRouter(prefix="/api/v1", tags=["experiments"])
 
@@ -24,8 +24,13 @@ class AssignmentUpdate(BaseModel):
 
 
 @router.get("/properties/{property_id}/experiments")
-def list_experiments(property_id: str, db: Session = Depends(get_db)):
+def list_experiments(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """List experiments for a property (via diagnostic runs)."""
+    verify_property_access(db, property_id, user)
     from app.models.diagnostic import DiagnosticRun
     run_ids = [
         str(r.id) for r in
@@ -131,6 +136,7 @@ def update_assignment(
     assignment_id: str,
     req: AssignmentUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Update outcome data for an experiment assignment."""
     assignment = db.query(ExperimentAssignment).filter_by(

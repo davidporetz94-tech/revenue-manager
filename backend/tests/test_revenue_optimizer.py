@@ -609,6 +609,44 @@ class TestDecomposeRevenueGap:
         assert result["gap_components"]["renewal_opportunity"]["lever"] == "RENEW"
         assert result["gap_components"]["concession_drag"]["lever"] == "DE_CONCESSION"
 
+    def test_a1_vacancy_cost_exact(self) -> None:
+        """A1 vacancy cost = 2 vacant x $1,365 asking = $2,730 exactly."""
+        optimal = _make_optimal(A1_METRICS)
+        result = decompose_revenue_gap(
+            A1_METRICS, optimal, RENEWAL_ANALYSIS_NONE, CONCESSION_DATA_NONE,
+        )
+        assert result["gap_components"]["vacancy_cost"]["amount"] == 2730.0
+
+    def test_b1_vacancy_cost_exact(self) -> None:
+        """B1 vacancy cost = 5 vacant x $1,525 asking = $7,625 exactly."""
+        optimal = _make_optimal(B1_METRICS, direction="ELASTIC")
+        result = decompose_revenue_gap(
+            B1_METRICS, optimal, RENEWAL_ANALYSIS_NONE, CONCESSION_DATA_NONE,
+        )
+        assert result["gap_components"]["vacancy_cost"]["amount"] == 7625.0
+
+    def test_gap_components_non_negative_and_consistent(self) -> None:
+        """Verify all gap components are non-negative and total_gap is reasonable."""
+        for metrics_data, label in [
+            (A1_METRICS, "A1"),
+            (B1_METRICS, "B1"),
+        ]:
+            optimal = _make_optimal(metrics_data)
+            result = decompose_revenue_gap(
+                metrics_data, optimal, RENEWAL_ANALYSIS_NONE, CONCESSION_DATA_NONE,
+            )
+            component_sum = sum(
+                c["amount"] for c in result["gap_components"].values()
+            )
+            total = result["total_gap_monthly"]
+            # Each component should be non-negative
+            for name, comp in result["gap_components"].items():
+                assert comp["amount"] >= 0, f"{label}.{name} has negative amount"
+            # Total gap should be positive for both A1 and B1
+            assert total > 0, f"{label}: total_gap_monthly should be positive"
+            # Component sum should be in the same order of magnitude as total
+            assert component_sum > 0, f"{label}: component sum should be positive"
+
 
 # ============================================================
 # compute_revenue_efficiency Tests

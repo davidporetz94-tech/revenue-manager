@@ -5,13 +5,20 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.snapshot import HistoricalSnapshot
 from app.models.property import UnitType
+from app.models.user import User
+from app.auth.dependencies import get_current_user, verify_property_access
 
 router = APIRouter(prefix="/api/v1", tags=["snapshots"])
 
 
 @router.get("/properties/{property_id}/snapshots")
-def get_snapshots(property_id: str, db: Session = Depends(get_db)):
+def get_snapshots(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get historical snapshots for all unit types in a property."""
+    verify_property_access(db, property_id, user)
     unit_types = db.query(UnitType).filter_by(property_id=property_id).all()
     result = {}
     for ut in unit_types:

@@ -13,7 +13,7 @@ from app.models.renewal import RenewalRule, RenewalOutput
 from app.models.property import Property, Unit, UnitType
 from app.models.diagnostic import AuditLog
 from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 
 router = APIRouter(prefix="/api/v1", tags=["renewals"])
 
@@ -230,6 +230,7 @@ def preview_renewal_pricing(
     user: User = Depends(get_current_user),
 ) -> dict:
     """Preview computed renewal prices without saving."""
+    verify_property_access(db, req.property_id, user)
     month_date = date.fromisoformat(req.target_month)
     units = _get_expiring_units(db, req.property_id, req.unit_type_code, month_date)
     new_lease = _get_asking_rent_for_type(db, req.property_id, req.unit_type_code)

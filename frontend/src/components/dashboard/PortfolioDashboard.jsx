@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import { formatDollar, formatPercent, gradeColor, gradeLabel } from '../../utils/format';
 import { getPropertySummary, runPortfolioDiagnostic, getDiagnosticRun, getSlides, getLatestDecisions, createPricingDecision, createBatchDecisions, getExpiringLeases, getRenewalRules } from '../../api/client';
@@ -48,6 +48,15 @@ export default function PortfolioDashboard({ properties, onSelectProperty, onSho
   const [pricingDecisions, setPricingDecisions] = useState({}); // keyed by unit_type_code
   const [renewalDecisions, setRenewalDecisions] = useState({});
   const [decisionLoading, setDecisionLoading] = useState({}); // keyed by `${type}-${code}`
+
+  // Polling ref for cleanup
+  const pollRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   // Renewal rule workflow state
   const RENEWAL_LOOKAHEAD = 3; // months ahead (configurable)
@@ -219,22 +228,26 @@ export default function PortfolioDashboard({ properties, onSelectProperty, onSho
       }
       setPortfolioDiagStatus('Running AI analysis...');
       let attempts = 0;
-      const poll = setInterval(async () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
         attempts++;
         try {
           const status = await getDiagnosticRun(run.id);
           if (status.status === 'COMPLETED') {
-            clearInterval(poll);
+            clearInterval(pollRef.current);
+            pollRef.current = null;
             const deck = await getSlides(status.id);
             setPortfolioDiagLoading(false);
             if (onShowPortfolioSlideshow) onShowPortfolioSlideshow(deck);
           } else if (status.status === 'FAILED' || attempts >= 30) {
-            clearInterval(poll);
+            clearInterval(pollRef.current);
+            pollRef.current = null;
             setPortfolioDiagLoading(false);
             setPortfolioError(status.error_message || 'Timed out');
           }
         } catch {
-          clearInterval(poll);
+          clearInterval(pollRef.current);
+          pollRef.current = null;
           setPortfolioDiagLoading(false);
           setPortfolioError('Connection lost');
         }

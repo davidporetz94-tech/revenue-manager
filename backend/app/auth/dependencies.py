@@ -17,13 +17,13 @@ def get_current_user(
 ) -> User:
     """Extract and verify user from JWT token.
 
-    Falls back to demo user if no token provided (for MVP convenience).
+    Falls back to demo user only when DEMO_MODE is enabled.
     """
     if credentials is None:
-        # MVP fallback: use demo user
-        user = db.query(User).filter_by(email="demo@example.com").first()
-        if user:
-            return user
+        if settings.DEMO_MODE:
+            user = db.query(User).filter_by(email="demo@example.com").first()
+            if user:
+                return user
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
@@ -45,3 +45,27 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
 
     return user
+
+
+def verify_property_access(db: Session, property_id: str, user: User):
+    """Verify that a property belongs to the user's organization.
+
+    Args:
+        db: database session.
+        property_id: UUID of the property.
+        user: authenticated user.
+
+    Returns:
+        Property ORM object if access is allowed.
+
+    Raises:
+        HTTPException 404 if property not found or not in user's org.
+    """
+    from app.models.property import Property
+
+    prop = db.query(Property).filter_by(
+        id=property_id, organization_id=user.organization_id
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return prop
