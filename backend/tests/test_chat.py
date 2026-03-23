@@ -106,3 +106,9 @@ class TestChatEndpoint:
             assert "asking" in data
             assert "daily_burn" in data
             assert "dom" in data
+            # Revenue optimization fields
+            assert "optimal_asking" in data
+            assert "elasticity_direction" in data
+            assert "revenue_gap_monthly" in data
+            assert "grade" in data
+            assert "gap_components" in data

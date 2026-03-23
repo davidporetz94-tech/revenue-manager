@@ -42,36 +42,48 @@ AFTER completing any task:
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18+ with Tailwind CSS |
-| Backend | Python / FastAPI |
-| Database | PostgreSQL 15+ with SQLAlchemy 2.0 ORM (mapped_column style) |
+| Frontend | React 18+ (CRA) with Tailwind CSS |
+| Backend | Python 3.12 / FastAPI |
+| Database | PostgreSQL (Railway managed) with SQLAlchemy 2.0 ORM (mapped_column style) |
 | AI Engine | Hybrid — deterministic rules-based engine + Claude API (claude-sonnet-4-20250514) |
-| Migrations | Alembic (reversible) |
+| Migrations | Alembic (reversible, auto-run on startup via lifespan handler) |
 | Charts | Recharts |
 | Auth | JWT (bcrypt + PyJWT, 24h expiry) |
 | Validation | Pydantic v2 |
+| Hosting | Railway Pro (3-service: Postgres + backend + frontend) |
 
 ---
 
 ## Key Commands
 
 ```bash
-# Database
+# Database (local)
 alembic upgrade head                          # Apply all migrations
 alembic downgrade -1                          # Rollback last migration
 python -m app.seed.seed_all                   # Seed all dummy data
 
-# Backend
+# Backend (local dev)
 cd backend && uvicorn app.main:app --reload   # Start FastAPI dev server
 cd backend && pytest                          # Run all backend tests
 cd backend && pytest tests/test_reconciliation.py  # Verify data reconciliation (56+ checks)
 
-# Frontend
+# Frontend (local dev)
 cd frontend && npm install                    # Install dependencies
 cd frontend && npm start                      # Start React dev server
 
-# Docker
+# Docker (local full stack)
 docker-compose up --build                     # Full stack
+
+# Railway deployment (PRODUCTION)
+cd backend && railway up . --service backend --path-as-root    # Deploy backend
+cd frontend && railway up . --service frontend --path-as-root  # Deploy frontend
+railway service status --service backend      # Check backend deploy status
+railway service status --service frontend     # Check frontend deploy status
+railway service logs --service backend        # View backend logs
+railway service logs --service frontend       # View frontend logs
+railway variable set --service backend KEY=val    # Set backend env var
+railway variable set --service frontend KEY=val   # Set frontend env var
+curl https://backend-production-1827.up.railway.app/health    # Production health check
 
 # Specific test suites
 pytest tests/test_reconciliation.py           # Data integrity (Spec 01)
@@ -309,6 +321,17 @@ These rules are embedded in the architecture and must be enforced in every piece
 - **Do NOT** use random seeding without reconciliation. "Balancing unit" approach only.
 - **Do NOT** skip loading states in the frontend. Every async operation shows feedback.
 
+### Deployment Anti-Patterns
+- **Do NOT** hardcode URLs, ports, or secrets in code. All config comes from environment variables.
+- **Do NOT** commit `.env` files. Secrets are set via `railway variable set`.
+- **Do NOT** use `VITE_` env var prefix — this is CRA, use `REACT_APP_` prefix.
+- **Do NOT** use `npm ci` in the frontend Dockerfile — lockfile may be out of sync, use `npm install`.
+- **Do NOT** use `--reload` in production Dockerfiles. Only for local dev.
+- **Do NOT** hardcode `sqlalchemy.url` in alembic.ini for production — `env.py` overrides it from `DATABASE_URL`.
+- **Do NOT** forget to redeploy BOTH services when making cross-cutting changes (e.g., API contract changes).
+- **Do NOT** forget `--path-as-root` when running `railway up` from a subdirectory.
+- **Do NOT** add new model columns without creating an Alembic migration — the lifespan handler runs migrations on startup, so missing migrations will crash the app in production.
+
 ---
 
 ## Verification Steps
@@ -412,6 +435,57 @@ All endpoints except `/auth/*` require JWT Bearer token. All queries filter by `
 | 04 | COMPLETE | 26/26 | 12 slides, viz exact, consistency check, fallback works |
 | 05 | COMPLETE | Build OK | 8 charts, 11 slides, keyboard nav, property switching |
 | 06 | COMPLETE | 15/15 | Auth, 22 endpoints, config preview, comp refresh, audit |
+| Deploy | COMPLETE | Live | Railway Pro — 3 services (Postgres, backend, frontend) |
+
+---
+
+## Production Deployment (Railway)
+
+**This app is LIVE on Railway.** All code changes must account for the production environment.
+
+### Live URLs
+| Service | URL |
+|---------|-----|
+| Frontend | https://frontend-production-341a.up.railway.app |
+| Backend API | https://backend-production-1827.up.railway.app |
+| Health Check | https://backend-production-1827.up.railway.app/health |
+
+### Railway Project
+- **Project:** roborev
+- **Account:** davidporetz94@gmail.com
+- **Workspace:** davidporetz94-tech's Projects
+- **Services:** Postgres (managed plugin), backend (Docker), frontend (Docker/nginx)
+
+### Deployment Workflow
+After making code changes:
+1. Run tests locally: `cd backend && pytest`
+2. Deploy backend: `cd backend && railway up . --service backend --path-as-root`
+3. Deploy frontend: `cd frontend && railway up . --service frontend --path-as-root`
+4. Verify: `curl https://backend-production-1827.up.railway.app/health`
+
+**IMPORTANT:** Frontend uses CRA (not Vite). The env var prefix is `REACT_APP_`, not `VITE_`.
+
+### Environment Variables
+All secrets are set via `railway variable set`, NEVER in code. Key variables:
+- `DATABASE_URL` — Railway Postgres internal URL
+- `ANTHROPIC_API_KEY` — Claude API key (secret)
+- `SECRET_KEY` — JWT signing key (auto-generated)
+- `CORS_ORIGINS` — Frontend domain + localhost origins
+- `REACT_APP_API_URL` — Backend URL (build-time arg for frontend)
+
+### Startup Sequence (Automatic)
+On each backend deploy, the lifespan handler automatically:
+1. Runs `alembic upgrade head` (creates/updates all tables)
+2. Checks if demo user exists
+3. If no demo user → runs `seed_all.py` (creates demo data)
+4. If demo user exists → skips seeding (idempotent)
+
+### Key Architecture Details
+- **Backend Dockerfile:** Python 3.12-slim, uvicorn on `${PORT:-8000}`, no `--reload`
+- **Frontend Dockerfile:** Multi-stage (Node 20 build → nginx:alpine serve), `REACT_APP_API_URL` injected at build time, PORT via sed at runtime
+- **nginx.conf:** SPA fallback (`try_files $uri $uri/ /index.html`), dynamic PORT
+- **alembic/env.py:** Overrides `sqlalchemy.url` from `DATABASE_URL` env var (not from alembic.ini)
+- **config.py:** `CORS_ORIGINS` env var (comma-separated), read by main.py middleware
 
 ---
 

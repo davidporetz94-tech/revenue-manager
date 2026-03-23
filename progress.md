@@ -27,6 +27,52 @@ Each entry follows this structure:
 
 ## Log Entries
 
+### [2026-03-19 03:55] — Railway Deployment COMPLETE — All 3 Services Live
+**Phase:** Deployment
+**What was done:**
+- Audited entire codebase for deployment readiness (env vars, CORS, Dockerfiles, startup sequence)
+- Added `CORS_ORIGINS` env var to config.py, updated main.py CORS middleware to read from it
+- Added lifespan handler to main.py — auto-runs Alembic migrations and seeds demo data on startup (idempotent)
+- Fixed alembic/env.py to override sqlalchemy.url from DATABASE_URL env var (was hardcoded to docker-compose db host)
+- Created missing migration d0e4f5a6b7c8 for revenue_efficiency_zones column on client_configs
+- Rewrote backend Dockerfile: Python 3.12-slim, removed --reload, PORT from env var
+- Rewrote frontend Dockerfile: multi-stage build (Node 20 → nginx:alpine), REACT_APP_API_URL as build arg, dynamic PORT via sed
+- Created frontend/nginx.conf with SPA fallback routing and dynamic PORT placeholder
+- Created Railway project "roborev" with 3 services (Postgres plugin, backend, frontend)
+- Set all environment variables via Railway CLI (DATABASE_URL, ANTHROPIC_API_KEY, SECRET_KEY, CORS_ORIGINS, PORT, REACT_APP_API_URL)
+- Generated public domains for backend and frontend
+- Deployed via `railway up --path-as-root` (not GitHub integration — repo link failed)
+- Resolved 4 deployment failures: wrong upload root (needed --path-as-root), alembic.ini hardcoded URL, missing migration, frontend lockfile out of sync + nginx PORT mismatch
+- Verified: health check OK, login with demo credentials returns JWT, properties API returns real data, SPA routing works, frontend bundle contains correct API URL
+**Files created:**
+- backend/alembic/versions/d0e4f5a6b7c8_add_revenue_efficiency_zones.py
+- frontend/nginx.conf
+**Files modified:**
+- backend/app/config.py (added CORS_ORIGINS)
+- backend/app/main.py (lifespan handler, CORS from env var)
+- backend/app/database.py (unchanged — already reads from settings)
+- backend/alembic/env.py (override sqlalchemy.url from settings.DATABASE_URL)
+- backend/Dockerfile (production-ready)
+- frontend/Dockerfile (multi-stage nginx build)
+**Tests run:**
+- curl https://backend-production-1827.up.railway.app/health → {"status":"ok"}
+- POST /api/v1/auth/login with demo@example.com/demo123 → JWT token returned
+- GET /api/v1/properties with Bearer token → Property A & B with real data
+- curl frontend → 200, correct HTML with RoboRev title
+- SPA deep link /properties/123 → 200 (nginx try_files working)
+- Frontend JS bundle contains https://backend-production-1827.up.railway.app/api/v1
+**Blockers/Issues:**
+- railway add --repo failed (GitHub repo not linked to Railway account) → used railway up instead
+- First backend deploy uploaded entire project root → fixed with --path-as-root flag
+- Alembic crash: alembic.ini hardcoded sqlalchemy.url to docker-compose db host → fixed env.py to override from DATABASE_URL
+- Seed crash: revenue_efficiency_zones column missing from DB → created migration d0e4f5a6b7c8
+- Frontend npm ci failed: lockfile out of sync → switched to npm install
+- Frontend 502: nginx listening on port 80 but Railway injects different PORT → added dynamic PORT via sed in CMD
+**Next step:**
+- Walk through full evaluator checklist in browser. Consider linking GitHub repo for auto-deploy on push.
+
+---
+
 ### [2026-03-18 15:30] — Portfolio-Wide Diagnostic COMPLETE
 **Phase:** Feature Extension
 **What was done:**

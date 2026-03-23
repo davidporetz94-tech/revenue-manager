@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.engine.utils import round_half_up, safe_divide
 from app.models.property import Property, UnitType, Unit
 from app.models.config import ClientConfig
 from app.models.snapshot import HistoricalSnapshot
@@ -208,16 +209,42 @@ def get_property_summary(
         trends[ut.code] = trend_points
 
     # Compute portfolio-level revenue intelligence
+    # Use the same 60/40 blend as aggregator.aggregate_cross_property()
     total_units_sum = sum(
         m["identity"]["total_units"] for m in ut_metrics.values()
     )
-    portfolio_rev_eff = 0.0
+
+    # Component 1: weighted composite score from unit-type efficiency scores
+    composite_score = 0.0
     if total_units_sum > 0:
-        portfolio_rev_eff = sum(
-            (m.get("revenue_efficiency", {}).get("revenue_efficiency_score", 0) or 0)
-            * m["identity"]["total_units"]
-            for m in ut_metrics.values()
-        ) / total_units_sum
+        composite_score = round_half_up(
+            sum(
+                (m.get("revenue_efficiency", {}).get("revenue_efficiency_score", 0) or 0)
+                * m["identity"]["total_units"]
+                for m in ut_metrics.values()
+            ) / total_units_sum,
+            1,
+        )
+
+    # Component 2: revenue capture ratio (actual vs optimal revenue)
+    total_optimal = sum(
+        (m.get("optimal_pricing", {}).get("optimal_revenue_monthly", 0) or 0)
+        for m in ut_metrics.values()
+    )
+    total_current = sum(
+        (m.get("optimal_pricing", {}).get("current_revenue_monthly", 0) or 0)
+        for m in ut_metrics.values()
+    )
+    revenue_capture_pct = (
+        round_half_up(safe_divide(total_current, total_optimal) * 100, 1)
+        if total_optimal > 0 else 0.0
+    )
+
+    # Blend: 60% composite + 40% revenue capture (matches diagnosis formula)
+    portfolio_rev_eff = round_half_up(
+        composite_score * 0.6 + revenue_capture_pct * 0.4, 1
+    )
+
     total_revenue_gap = sum(
         (m.get("revenue_gap", {}).get("total_gap_monthly", 0) or 0)
         for m in ut_metrics.values()
@@ -233,7 +260,7 @@ def get_property_summary(
         "trends": trends,
         "portfolio": {
             **portfolio_base,
-            "portfolio_revenue_efficiency": round(portfolio_rev_eff),
+            "portfolio_revenue_efficiency": portfolio_rev_eff,
             "total_revenue_gap": total_revenue_gap,
             "total_renewal_opportunity": total_renewal_opportunity,
         },
