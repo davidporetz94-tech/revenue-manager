@@ -17,6 +17,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/multifamily_rm
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     depends_on:
       - db

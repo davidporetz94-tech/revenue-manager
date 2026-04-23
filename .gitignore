@@ -12,3 +12,6 @@ venv/
 *.xlsx
 *.pdf
 .worktrees/
+
+# Test databases
+*.db

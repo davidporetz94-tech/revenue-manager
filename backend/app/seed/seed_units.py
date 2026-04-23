@@ -18,6 +18,8 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.engine.utils import round_half_up
+
 from app.models.property import Unit
 
 
@@ -297,7 +299,7 @@ def _seed_unit_type(
     running_total = 0.0
     for i, (amenities, raw_p) in enumerate(raw_premiums):
         if i < total - 1:
-            scaled = round(raw_p * scale_factor)
+            scaled = int(round_half_up(raw_p * scale_factor))
             final_premiums.append(scaled)
             running_total += scaled
         else:
@@ -329,12 +331,12 @@ def _seed_unit_type(
         for i in range(pure_occupied):
             progress = i / max(pure_occupied - 1, 1) if pure_occupied > 1 else 0.5
             variation = (progress - 0.5) * 80  # +/-40 from avg
-            rent = round(target_in_place_avg + variation)
+            rent = int(round_half_up(target_in_place_avg + variation))
             in_place_rents.append(rent)
 
         # ON_NOTICE units get rent near in-place avg
         for i in range(on_notice):
-            on_notice_rents.append(round(target_in_place_avg))
+            on_notice_rents.append(int(round_half_up(target_in_place_avg)))
 
         # Balancing: adjust last pure_occupied rent to hit exact total
         current_sum = sum(in_place_rents) + sum(on_notice_rents)

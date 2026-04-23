@@ -170,13 +170,13 @@ class TestB1Flags:
         assert all_flags["B1"]["count"] == 13, \
             f"B1 flags: {[f['type'] for f in all_flags['B1']['flags']]}"
 
-    def test_two_critical(self, all_flags):
+    def test_three_critical(self, all_flags):
         critical = [f for f in all_flags["B1"]["flags"] if f["severity"] == "CRITICAL"]
-        assert len(critical) == 2
+        assert len(critical) == 3
 
     def test_critical_types(self, all_flags):
         critical_types = {f["type"] for f in all_flags["B1"]["flags"] if f["severity"] == "CRITICAL"}
-        assert critical_types == {"OCCUPANCY_CRISIS", "EXPOSURE_CRISIS"}
+        assert critical_types == {"OCCUPANCY_CRISIS", "EXPOSURE_CRISIS", "EXPOSURE_DETERIORATING"}
 
     def test_expected_flags(self, all_flags):
         expected = {

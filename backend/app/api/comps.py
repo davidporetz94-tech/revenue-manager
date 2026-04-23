@@ -10,14 +10,19 @@ from app.database import get_db
 from app.models.comp import CompProperty, CompUnitType, CompRent
 from app.models.diagnostic import AuditLog
 from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 
 router = APIRouter(prefix="/api/v1", tags=["comps"])
 
 
 @router.get("/properties/{property_id}/comps")
-def get_comps(property_id: str, db: Session = Depends(get_db)):
+def get_comps(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get comp properties and their latest rents."""
+    verify_property_access(db, property_id, user)
     comps = db.query(CompProperty).filter_by(property_id=property_id, is_active=True).all()
     result = []
     for cp in comps:
@@ -54,8 +59,13 @@ def get_comps(property_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/properties/{property_id}/comps/trends")
-def get_comp_trends(property_id: str, db: Session = Depends(get_db)):
+def get_comp_trends(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get comp rent time series for a property."""
+    verify_property_access(db, property_id, user)
     comps = db.query(CompProperty).filter_by(property_id=property_id, is_active=True).all()
     result = []
     for cp in comps:
@@ -87,7 +97,16 @@ def refresh_comps(
     today = date.today()
     refreshed = 0
 
-    for cp in db.query(CompProperty).filter_by(is_active=True).all():
+    # Scope refresh to properties in user's organization
+    from app.models.property import Property
+    org_property_ids = [
+        p.id for p in
+        db.query(Property.id).filter_by(organization_id=user.organization_id).all()
+    ]
+    for cp in db.query(CompProperty).filter(
+        CompProperty.is_active == True,
+        CompProperty.property_id.in_(org_property_ids),
+    ).all():
         for cut in db.query(CompUnitType).filter_by(comp_property_id=cp.id).all():
             latest = (
                 db.query(CompRent)

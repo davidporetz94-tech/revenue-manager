@@ -2,6 +2,8 @@
 
 Usage: cd backend && python -m app.seed.seed_all
 """
+import os
+
 from app.database import SessionLocal
 from app.seed.seed_properties import seed_properties
 from app.seed.seed_units import seed_units
@@ -11,6 +13,9 @@ from app.seed.seed_config import seed_config
 
 
 def run_all_seeds() -> None:
+    if os.environ.get("RAILWAY_ENVIRONMENT") == "production":
+        raise RuntimeError("Cannot run seed_all in production — audit log deletion forbidden")
+
     db = SessionLocal()
     try:
         # Clear existing data in reverse dependency order

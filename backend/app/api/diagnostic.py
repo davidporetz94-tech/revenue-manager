@@ -17,16 +17,9 @@ from app.models.user import User
 from app.schemas.diagnostic import DiagnosticRunResponse, DiagnosticRunSummary
 from app.services.diagnostic_service import run_diagnostic
 from app.services.slide_deck_service import assemble_slide_deck
+from app.auth.dependencies import get_current_user, verify_property_access
 
 router = APIRouter(prefix="/api/v1", tags=["diagnostic"])
-
-
-def _get_demo_user(db: Session) -> User:
-    """Temporary: get demo user until auth is wired up."""
-    user = db.query(User).filter_by(email="demo@example.com").first()
-    if not user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    return user
 
 
 def _run_to_response(run: DiagnosticRun) -> DiagnosticRunResponse:
@@ -65,13 +58,13 @@ def _run_to_summary(run: DiagnosticRun) -> DiagnosticRunSummary:
     "/properties/{property_id}/diagnostic/run",
     response_model=DiagnosticRunResponse,
 )
-def create_diagnostic_run(property_id: str, db: Session = Depends(get_db)):
+def create_diagnostic_run(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Trigger a full diagnostic run for a property."""
-    user = _get_demo_user(db)
-
-    prop = db.query(Property).filter_by(id=property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    verify_property_access(db, property_id, user)
 
     try:
         result = run_diagnostic(
@@ -91,10 +84,11 @@ def create_diagnostic_run(property_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/diagnostic/portfolio/run", response_model=DiagnosticRunResponse)
-def create_portfolio_diagnostic(db: Session = Depends(get_db)):
+def create_portfolio_diagnostic(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Trigger a portfolio-wide diagnostic for all properties."""
-    user = _get_demo_user(db)
-
     from app.services.portfolio_diagnostic_service import run_portfolio_diagnostic
 
     try:
@@ -114,9 +108,15 @@ def create_portfolio_diagnostic(db: Session = Depends(get_db)):
 
 
 @router.get("/diagnostic/{run_id}", response_model=DiagnosticRunResponse)
-def get_diagnostic_run(run_id: str, db: Session = Depends(get_db)):
+def get_diagnostic_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get a diagnostic run by ID."""
-    run = db.query(DiagnosticRun).filter_by(id=run_id).first()
+    run = db.query(DiagnosticRun).filter_by(
+        id=run_id, organization_id=user.organization_id
+    ).first()
     if not run:
         raise HTTPException(status_code=404, detail="Diagnostic run not found")
 
@@ -124,9 +124,15 @@ def get_diagnostic_run(run_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/diagnostic/{run_id}/slides")
-def get_diagnostic_slides(run_id: str, db: Session = Depends(get_db)):
+def get_diagnostic_slides(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get the slide deck for a completed diagnostic run."""
-    run = db.query(DiagnosticRun).filter_by(id=run_id).first()
+    run = db.query(DiagnosticRun).filter_by(
+        id=run_id, organization_id=user.organization_id
+    ).first()
     if not run:
         raise HTTPException(status_code=404, detail="Diagnostic run not found")
     if run.status != "COMPLETED":
@@ -168,8 +174,13 @@ def get_diagnostic_slides(run_id: str, db: Session = Depends(get_db)):
     "/properties/{property_id}/diagnostic/history",
     response_model=list[DiagnosticRunSummary],
 )
-def get_diagnostic_history(property_id: str, db: Session = Depends(get_db)):
+def get_diagnostic_history(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """List past diagnostic runs for a property."""
+    verify_property_access(db, property_id, user)
     runs = (
         db.query(DiagnosticRun)
         .filter_by(property_id=property_id, scope="property")
@@ -184,9 +195,11 @@ def get_diagnostic_history(property_id: str, db: Session = Depends(get_db)):
     "/diagnostic/portfolio/history",
     response_model=list[DiagnosticRunSummary],
 )
-def get_portfolio_history(db: Session = Depends(get_db)):
+def get_portfolio_history(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """List past portfolio diagnostic runs."""
-    user = _get_demo_user(db)
     runs = (
         db.query(DiagnosticRun)
         .filter_by(organization_id=user.organization_id, scope="portfolio")

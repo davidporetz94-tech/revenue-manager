@@ -10,7 +10,9 @@ import logging
 import time
 import uuid
 from datetime import date, datetime
+from typing import Any
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.property import Property, UnitType
@@ -22,6 +24,19 @@ from app.services.claude_client import ClaudeClient, ClaudeAPIError
 from app.services.action_plan_service import build_action_plan_context
 
 logger = logging.getLogger(__name__)
+
+
+class _DiagnosisAssessment(BaseModel):
+    """Minimal validation for a unit type assessment from Claude."""
+    unit_type: str
+    health_score: int
+    grade: str
+
+
+class _DiagnosisResponse(BaseModel):
+    """Minimal Pydantic model for Claude diagnosis response validation."""
+    unit_type_assessments: list[_DiagnosisAssessment]
+    portfolio_assessment: dict[str, Any]
 
 DIAGNOSIS_SYSTEM_PROMPT = """You are a senior multifamily revenue management analyst with 15+ years of institutional portfolio experience. You receive structured metrics, pre-computed revenue efficiency scores, and gap decompositions from a pricing engine, along with the client's business plan context and threshold configuration.
 
@@ -252,6 +267,7 @@ def run_diagnostic(
     run = DiagnosticRun(
         id=uuid.uuid4(),
         property_id=property_id,
+        organization_id=organization_id,
         config_id=config.id,
         run_date=datetime.utcnow(),
         triggered_by=user_id,
@@ -289,6 +305,12 @@ def run_diagnostic(
             diagnosis = claude_client.call_json(
                 DIAGNOSIS_SYSTEM_PROMPT, diagnosis_user_msg
             )
+            # Validate Claude response structure
+            try:
+                _DiagnosisResponse.model_validate(diagnosis)
+            except ValidationError as ve:
+                logger.warning("Claude diagnosis failed validation: %s", ve)
+                diagnosis = _fallback_diagnosis(metrics, all_flags)
         except ClaudeAPIError as e:
             logger.error("Claude diagnosis failed: %s", e)
             diagnosis = _fallback_diagnosis(metrics, all_flags)
@@ -405,9 +427,19 @@ def _build_action_plan_prompt(
             "elasticity": m.get("elasticity", {}),
         }
 
+    # Compute expected impacts by unit type from gap decomposition
+    expected_impacts = {}
+    for code, m in metrics["unit_type_metrics"].items():
+        gap = m.get("revenue_gap", {})
+        components = gap.get("gap_components", {})
+        expected_impacts[code] = {
+            lever: comp.get("amount", 0) for lever, comp in components.items()
+        }
+
     return json.dumps({
         "diagnosis": diagnosis,
         "unit_type_revenue_data": unit_type_gaps,
+        "expected_impacts_by_unit_type": expected_impacts,
         "pre_computed_revenue_facts": context["revenue_facts"],
         "experiment_designs": context["experiment_designs"],
         "experiment_eligibility": context["experiment_eligibility"],

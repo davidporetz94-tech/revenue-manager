@@ -61,6 +61,12 @@ def build_action_plan_context(
         has_critical = "CRITICAL" in flag_severities
         critical_count = sum(1 for f in flags if f["severity"] == "CRITICAL")
 
+        # Suppress MAB for CRISIS/DISTRESSED grades — direct action only
+        grade = m.get("revenue_efficiency", {}).get("grade", "")
+        grade_suppressed = grade in ("CRISIS", "DISTRESSED")
+        if grade_suppressed:
+            eligible = False
+
         experiment_eligibility[code] = {
             "eligible": eligible,
             "vacant_units": vacant,
@@ -69,6 +75,7 @@ def build_action_plan_context(
             "min_occ_met": occ >= min_occ,
             "has_critical_flags": has_critical,
             "critical_count": critical_count,
+            "grade_suppressed": grade_suppressed,
             "recommendation": _experiment_recommendation(
                 eligible, has_critical, critical_count, vacant
             ),

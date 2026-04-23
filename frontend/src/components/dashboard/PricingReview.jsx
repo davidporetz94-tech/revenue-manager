@@ -7,6 +7,9 @@ import ConfigEditor from '../config/ConfigEditor';
 import CompManagement from '../config/CompManagement';
 import ExperimentTracking from '../config/ExperimentTracking';
 import ChatPanel from '../chat/ChatPanel';
+import RevenueGauge from './RevenueGauge';
+import PricingTrendChart from './PricingTrendChart';
+import DirectionBadge from './DirectionBadge';
 
 const TABS = [
   { key: 'overview', label: 'Overview' },
@@ -80,7 +83,7 @@ export default function PricingReview({ property, onBack, onShowSlideshow }) {
             const deck = await getSlides(status.id);
             setSlideDeck(deck);
             setDiagLoading(false);
-          } else if (status.status === 'FAILED' || attempts >= 30) {
+          } else if (status.status === 'FAILED' || attempts >= 90) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             setDiagLoading(false);
@@ -105,7 +108,7 @@ export default function PricingReview({ property, onBack, onShowSlideshow }) {
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={onBack} className="text-stone-400 hover:text-stone-600 text-sm transition-colors">
-              ← Portfolio
+              &larr; Portfolio
             </button>
             <div className="w-px h-5 bg-stone-200" />
             <div className="flex items-center gap-3">
@@ -491,6 +494,14 @@ function occColor(occ) {
   return '#DC2626';
 }
 
+function scoreToGrade(score) {
+  if (score >= 80) return 'OPTIMIZED';
+  if (score >= 65) return 'OPPORTUNITY';
+  if (score >= 50) return 'IMBALANCED';
+  if (score >= 35) return 'DISTRESSED';
+  return 'CRISIS';
+}
+
 function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagLoading, diagResult, onRunDiagnostic }) {
   if (summaryLoading || !summaryData) {
     return (
@@ -511,11 +522,19 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
   const propOcc = propTotal > 0 ? propOccupied / propTotal : 0;
   const propBurn = unitTypes.reduce((s, [, d]) => s + d.dailyBurn, 0);
   const propMonthlyCost = unitTypes.reduce((s, [, d]) => s + d.monthlyCost, 0);
+  const propRevenueGap = unitTypes.reduce((s, [, d]) => s + (d.revenueGapMonthly || 0), 0);
+  const propRenewalOpp = unitTypes.reduce((s, [, d]) => s + (d.renewalCaptureAnnual || 0), 0);
   const trends = summaryData.trends || {};
+
+  // Compute property-level revenue efficiency
+  const propEffScore = propTotal > 0
+    ? Math.round(unitTypes.reduce((s, [, d]) => s + (d.revenueEfficiency || 0) * d.total, 0) / propTotal)
+    : 0;
+  const propGrade = scoreToGrade(propEffScore);
 
   return (
     <div>
-      {/* Property KPIs */}
+      {/* Property Header + Action Button */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-display text-2xl text-stone-900">{property.name} Overview</h2>
         <button
@@ -551,7 +570,24 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
         </button>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      {/* 6 KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+        <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
+          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Revenue Efficiency</p>
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="font-mono text-xl font-bold" style={{ color: gradeColor(propGrade) }}>{propEffScore}</span>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{
+              backgroundColor: gradeColor(propGrade) + '15',
+              color: gradeColor(propGrade),
+            }}>
+              {gradeLabel(propGrade)}
+            </span>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
+          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Revenue Gap</p>
+          <span className="font-mono text-xl font-bold text-crisis">{formatDollar(Math.abs(propRevenueGap))}<span className="text-[10px] text-stone-400 ml-1">/mo</span></span>
+        </div>
         <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
           <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Occupancy</p>
           <span className="font-mono text-xl font-bold" style={{ color: occColor(propOcc) }}>{(propOcc * 100).toFixed(1)}%</span>
@@ -561,12 +597,12 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
           <span className="font-mono text-xl font-bold text-stone-800">{propVacant} <span className="text-stone-400 text-sm">/ {propTotal}</span></span>
         </div>
         <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
-          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Daily Vacancy Cost</p>
-          <span className="font-mono text-xl font-bold text-crisis">{formatDollar(propBurn)}<span className="text-[10px] text-stone-400 ml-1">/day</span></span>
+          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Vacancy Cost</p>
+          <span className="font-mono text-xl font-bold" style={{ color: '#D97706' }}>{formatDollar(propMonthlyCost)}<span className="text-[10px] text-stone-400 ml-1">/mo</span></span>
         </div>
         <div className="bg-white rounded-xl border border-stone-200 p-4 shadow-card">
-          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Monthly Vacancy Cost</p>
-          <span className="font-mono text-xl font-bold text-crisis">{formatDollar(propMonthlyCost)}</span>
+          <p className="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Renewal Opportunity</p>
+          <span className="font-mono text-xl font-bold text-positive">{formatDollar(propRenewalOpp)}<span className="text-[10px] text-stone-400 ml-1">/yr</span></span>
         </div>
       </div>
 
@@ -582,7 +618,28 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
         </div>
       )}
 
-      {/* Deep unit type cards */}
+      {/* Pricing Trends Section */}
+      <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Pricing Trends</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {unitTypes.map(([code, d]) => (
+          <div key={code} className="bg-white rounded-xl border border-stone-200 p-5 shadow-card">
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-mono text-sm font-bold text-stone-700">{code}</span>
+              {d.priceDirection && <DirectionBadge direction={d.priceDirection} />}
+            </div>
+            <PricingTrendChart
+              data={trends[code] || []}
+              series={['asking', 'comps', 'executed', 'inPlace']}
+              height={160}
+              referenceLines={[
+                ...(d.optimalAsking ? [{ value: d.optimalAsking, label: 'Optimal', color: '#EA580C' }] : []),
+              ]}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Unit type cards with revenue intelligence */}
       <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Unit Type Analysis</h3>
       <div className="space-y-4 mb-6">
         {unitTypes.map(([code, d]) => {
@@ -590,6 +647,7 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
           const spreadPct = d.comps > 0 ? ((spread / d.comps) * 100).toFixed(1) : '0.0';
           const ltl = d.asking - d.inPlace;
           const ltlPct = d.inPlace > 0 ? ((ltl / d.inPlace) * 100).toFixed(1) : '0.0';
+          const cardColor = d.grade ? gradeColor(d.grade) : occColor(d.occ);
 
           // Health badge from flag preview
           const fpData = flagPreview?.[code];
@@ -603,7 +661,7 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
           else badge = { label: 'HEALTHY', color: '#059669' };
 
           return (
-            <div key={code} className="bg-white rounded-xl border border-stone-200 p-6 shadow-card" style={{ borderLeftWidth: '4px', borderLeftColor: badge.color }}>
+            <div key={code} className="bg-white rounded-xl border border-stone-200 p-6 shadow-card" style={{ borderLeftWidth: '4px', borderLeftColor: cardColor }}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-lg font-bold text-stone-800">{code}</span>
@@ -633,7 +691,7 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
               </div>
 
               {/* Spread analysis + velocity */}
-              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 pt-3 border-t border-stone-100">
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 pt-3 border-t border-stone-100 mb-4">
                 <div>
                   <span className="text-[10px] text-stone-400 uppercase tracking-wider">vs Comps</span>
                   <span className="font-mono text-sm font-bold block" style={{ color: spread > 0 ? (Math.abs(spread/d.comps) > 0.05 ? '#DC2626' : '#D97706') : '#059669' }}>
@@ -665,39 +723,60 @@ function OverviewTab({ property, flagPreview, summaryData, summaryLoading, diagL
                   <span className="font-mono text-sm font-bold text-crisis block">{formatDollar(d.dailyBurn)}/day</span>
                 </div>
               </div>
+
+              {/* Revenue Intelligence Row */}
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 pt-3 border-t border-stone-100">
+                <div>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Rev Efficiency</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-mono text-sm font-bold" style={{ color: cardColor }}>{d.revenueEfficiency ?? '—'}</span>
+                    {d.grade && (
+                      <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{
+                        backgroundColor: cardColor + '15',
+                        color: cardColor,
+                      }}>
+                        {gradeLabel(d.grade)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Optimal Asking</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono text-sm font-bold text-stone-700">{d.optimalAsking ? formatDollar(d.optimalAsking) : '—'}</span>
+                    {d.priceDirection && <DirectionBadge direction={d.priceDirection} showLabel={false} />}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Revenue Gap</span>
+                  <span className="font-mono text-sm font-bold text-crisis block">{d.revenueGapMonthly != null ? formatDollar(Math.abs(d.revenueGapMonthly)) + '/mo' : '—'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Dominant Lever</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 inline-block mt-0.5">{d.dominantLever || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Renewals (90d)</span>
+                  <span className="font-mono text-sm font-bold text-stone-700 block">{d.renewalCount90d ?? '—'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-stone-400 uppercase tracking-wider">Elasticity</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-stone-700">{d.elasticityDirection || '—'}</span>
+                    {d.elasticityConfidence && (
+                      <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{
+                        backgroundColor: d.elasticityConfidence === 'HIGH' ? '#05966915' : d.elasticityConfidence === 'MEDIUM' ? '#7C3AED15' : '#6B728015',
+                        color: d.elasticityConfidence === 'HIGH' ? '#059669' : d.elasticityConfidence === 'MEDIUM' ? '#7C3AED' : '#6B7280',
+                      }}>
+                        {d.elasticityConfidence}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           );
         })}
-      </div>
-
-      {/* Trend charts — asking vs comps over time */}
-      <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Asking vs Comps Trend</h3>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {unitTypes.map(([code, d]) => (
-          <div key={code} className="bg-white rounded-xl border border-stone-200 p-5 shadow-card">
-            <div className="flex items-center justify-between mb-3">
-              <span className="font-mono text-sm font-bold text-stone-700">{code}</span>
-              <div className="flex items-center gap-3 text-[10px] text-stone-400">
-                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#7C3AED] inline-block" /> Asking</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#2563EB] inline-block border-dashed" /> Comps</span>
-              </div>
-            </div>
-            {trends[code] ? (
-              <ResponsiveContainer width="100%" height={160}>
-                <LineChart data={trends[code]} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#78716c' }} />
-                  <YAxis tickFormatter={formatDollar} tick={{ fontSize: 10, fill: '#78716c' }} domain={['dataMin - 30', 'dataMax + 30']} />
-                  <Tooltip formatter={(v) => formatDollar(v)} />
-                  <Line type="monotone" dataKey="asking" stroke="#7C3AED" strokeWidth={2} dot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="comps" stroke="#2563EB" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 5" />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-[160px] flex items-center justify-center text-xs text-stone-400">No trend data</div>
-            )}
-          </div>
-        ))}
       </div>
 
       {/* Property info */}

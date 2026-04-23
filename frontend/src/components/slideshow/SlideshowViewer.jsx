@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Component } from 'react';
 import SlideNavigation from './SlideNavigation';
 import TitleSlide from './slides/TitleSlide';
 import ExecutiveSummarySlide from './slides/ExecutiveSummarySlide';
@@ -130,7 +130,9 @@ export default function SlideshowViewer({ slideDeck, propertyName, onExit }) {
           )}
 
           <div className="p-8" style={{ minHeight: (slide.slide_type === 'TITLE' || slide.slide_type === 'PORTFOLIO_TITLE') ? '540px' : '460px' }}>
-            <SlideComponent slide={slide} />
+            <SlideErrorBoundary slideType={slide.slide_type}>
+              <SlideComponent slide={slide} />
+            </SlideErrorBoundary>
           </div>
         </div>
       </div>
@@ -143,6 +145,35 @@ export default function SlideshowViewer({ slideDeck, propertyName, onExit }) {
       />
     </div>
   );
+}
+
+class SlideErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error(`Slide render error (${this.props.slideType}):`, error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex items-center justify-center h-full text-center">
+          <div>
+            <p className="text-stone-400 text-sm mb-2">Slide failed to render</p>
+            <p className="text-stone-500 text-xs">{this.props.slideType}</p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function FallbackSlide({ slide }) {

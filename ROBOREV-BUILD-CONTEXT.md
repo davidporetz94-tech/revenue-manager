@@ -212,11 +212,53 @@ Built for the post-DOJ-settlement era:
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 18, Tailwind CSS, Recharts |
-| Backend | Python 3.14, FastAPI, SQLAlchemy 2.0 |
-| Database | PostgreSQL 17 (14 tables, JSONB configs) |
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 |
+| Database | PostgreSQL 15 (Railway managed, 14 tables, JSONB configs) |
 | AI | Claude claude-sonnet-4-20250514 via Anthropic SDK |
 | Auth | JWT (bcrypt + PyJWT, 24h expiry) |
-| Migrations | Alembic (reversible) |
+| Migrations | Alembic (reversible, auto-run on startup) |
+| Hosting | Railway Pro (3-service architecture) |
+
+---
+
+## Live Deployment (Railway)
+
+| Service | URL |
+|---------|-----|
+| Frontend | https://frontend-production-341a.up.railway.app |
+| Backend | https://backend-production-1827.up.railway.app |
+| Database | PostgreSQL (internal: postgres.railway.internal:5432) |
+
+**Login:** demo@example.com / demo123
+
+### Deployment Architecture
+- **PostgreSQL** — Railway managed plugin, DATABASE_URL auto-injected
+- **Backend** — Python 3.12-slim Docker image, uvicorn, PORT from env var. Lifespan handler auto-runs Alembic migrations and seeds demo data on first boot.
+- **Frontend** — Multi-stage Docker build (Node 20 → nginx:alpine). CRA build with `REACT_APP_API_URL` injected at build time. nginx serves static files with SPA fallback routing. PORT dynamically configured via sed at container start.
+
+### Deployment Workflow
+Code changes deploy via `railway up` from the respective service directory:
+```bash
+cd backend && railway up . --service backend --path-as-root
+cd frontend && railway up . --service frontend --path-as-root
+```
+
+Environment variables are managed via Railway CLI:
+```bash
+railway variable set --service backend KEY=value
+railway variable set --service frontend KEY=value
+```
+
+### Environment Variables (Railway)
+| Service | Variable | Source |
+|---------|----------|--------|
+| Backend | DATABASE_URL | Railway Postgres plugin |
+| Backend | ANTHROPIC_API_KEY | Manual (secret) |
+| Backend | SECRET_KEY | Auto-generated (openssl rand -hex 32) |
+| Backend | PORT | 8000 |
+| Backend | CORS_ORIGINS | Frontend domain + localhost |
+| Frontend | REACT_APP_API_URL | Backend public URL + /api/v1 |
+| Frontend | PORT | 80 |
 
 ---
 
@@ -224,11 +266,11 @@ Built for the post-DOJ-settlement era:
 
 | Metric | Value |
 |--------|-------|
-| Total files | 131 |
-| Lines of code | 13,454 |
+| Total files | 131+ |
+| Lines of code | 13,454+ |
 | Backend tests | 203 passing |
 | Test suites | 7 (reconciliation, metrics, flags, claude client, diagnostic, action plan, narrative, viz data, auth) |
-| API endpoints | 22 |
+| API endpoints | 28+ |
 | Database tables | 14 |
 | Seed data | 156 units, 9 comp properties, 72 rent observations, 16 snapshots |
 | Engine performance | 9.7ms for full property metrics |

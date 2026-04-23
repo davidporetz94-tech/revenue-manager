@@ -98,12 +98,16 @@ class ClaudeClient:
         self,
         system_prompt: str,
         user_message: str,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
     ) -> str:
         """Call Claude and return raw text response.
 
         Args:
             system_prompt: system-level instructions.
             user_message: user-level message/data.
+            max_tokens: override default max tokens.
+            timeout: request timeout in seconds.
 
         Returns:
             Raw text from Claude's response.
@@ -112,12 +116,15 @@ class ClaudeClient:
             ClaudeAPIError: if the call fails.
         """
         try:
-            response = self._client.messages.create(
+            kwargs = dict(
                 model=MODEL,
-                max_tokens=MAX_TOKENS,
+                max_tokens=max_tokens or MAX_TOKENS,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             )
+            if timeout:
+                kwargs["timeout"] = timeout
+            response = self._client.messages.create(**kwargs)
             text = ""
             for block in response.content:
                 if block.type == "text":

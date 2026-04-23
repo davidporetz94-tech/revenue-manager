@@ -119,6 +119,7 @@ def run_portfolio_diagnostic(
     user_id: str,
     claude_client: ClaudeClient | None = None,
     reference_date: date | None = None,
+    run_id: str | None = None,
 ) -> DiagnosticRun:
     """Run the full portfolio diagnostic pipeline.
 
@@ -128,6 +129,7 @@ def run_portfolio_diagnostic(
         user_id: UUID of user triggering the run.
         claude_client: optional ClaudeClient (for testing with mocks).
         reference_date: optional date override.
+        run_id: optional existing run ID to update (for background execution).
 
     Returns:
         DiagnosticRun ORM object with all results.
@@ -139,19 +141,26 @@ def run_portfolio_diagnostic(
 
     total_start = time.perf_counter()
 
-    # Create portfolio diagnostic run
-    run = DiagnosticRun(
-        id=uuid.uuid4(),
-        property_id=None,
-        organization_id=organization_id,
-        scope="portfolio",
-        config_id=None,
-        run_date=datetime.utcnow(),
-        triggered_by=user_id,
-        status="RUNNING",
-    )
-    db.add(run)
-    db.flush()
+    # Use existing run record or create a new one
+    if run_id:
+        run = db.query(DiagnosticRun).filter_by(id=run_id).first()
+        if not run:
+            raise ValueError(f"Run {run_id} not found")
+        run.status = "RUNNING"
+        db.flush()
+    else:
+        run = DiagnosticRun(
+            id=uuid.uuid4(),
+            property_id=None,
+            organization_id=organization_id,
+            scope="portfolio",
+            config_id=None,
+            run_date=datetime.utcnow(),
+            triggered_by=user_id,
+            status="RUNNING",
+        )
+        db.add(run)
+        db.flush()
 
     try:
         # Step 1: Compute metrics for all properties
@@ -248,9 +257,31 @@ def run_portfolio_diagnostic(
 
         # Step 4: Claude action plan
         action_start = time.perf_counter()
+        # Compute per-property revenue facts for action planning
+        revenue_facts_by_property = {}
+        for pdata in all_property_data:
+            prop_metrics = pdata["metrics"]
+            prop_name = prop_metrics.get("property_name", "Unknown")
+            daily_burn = sum(
+                m["revenue_metrics"]["daily_vacancy_burn"]
+                for m in prop_metrics["unit_type_metrics"].values()
+            )
+            gap_components = {}
+            for code, m in prop_metrics["unit_type_metrics"].items():
+                gap = m.get("revenue_gap", {}).get("gap_components", {})
+                gap_components[code] = {
+                    lever: comp.get("amount", 0)
+                    for lever, comp in gap.items()
+                }
+            revenue_facts_by_property[prop_name] = {
+                "daily_burn": daily_burn,
+                "gap_components_by_unit_type": gap_components,
+            }
+
         action_msg = json.dumps({
             "diagnosis": diagnosis,
             "aggregate": portfolio_metrics["aggregate"],
+            "revenue_facts_by_property": revenue_facts_by_property,
         }, indent=2)
 
         try:

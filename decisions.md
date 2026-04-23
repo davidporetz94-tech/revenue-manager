@@ -163,9 +163,59 @@ These decisions were made during planning and are FINAL. They are logged here fo
 **Impact:** Evaluator sees metrics and flags within 1 second of clicking "Get AI Review". AI diagnosis fades in when ready.
 **Reversible:** Yes — can add streaming later
 
+### DEC-013 — Railway Over Vercel/Render/Fly for Deployment
+**Date:** 2026-03-19
+**Phase:** Deployment
+**Context:** Need to deploy the full stack (Postgres + FastAPI + React) to a live URL for evaluator access.
+**Options considered:**
+1. Vercel (frontend) + Render (backend + DB) — split hosting
+2. Railway Pro — unified platform for all 3 services
+3. Fly.io — container-based deployment
+**Decision:** Option 2 — Railway Pro
+**Rationale:** User already has a Railway Pro account. Railway supports managed Postgres, Docker-based services, and auto-injected DATABASE_URL. Single platform for all services simplifies deployment and reduces cognitive overhead. Pro tier avoids cold-start sleep.
+**Impact:** All deployment commands use Railway CLI. Environment variables managed via `railway variable set`. Deploy via `railway up --path-as-root`.
+**Reversible:** Yes — Dockerfiles are standard, can deploy anywhere that supports Docker
+
+### DEC-014 — railway up Over GitHub Integration for Deployment
+**Date:** 2026-03-19
+**Phase:** Deployment
+**Context:** Railway supports auto-deploy from GitHub repo, but `railway add --repo` failed with "repo not found" (likely GitHub app not authorized for the repo).
+**Options considered:**
+1. Debug GitHub integration and link repo for auto-deploy on push
+2. Use `railway up` for direct CLI deployment
+**Decision:** Option 2 — Direct CLI deployment via `railway up`
+**Rationale:** `railway up` works immediately, no OAuth/GitHub app setup required. Can switch to GitHub integration later. For a demo/evaluation deployment, manual CLI deploy is sufficient.
+**Impact:** Must run `railway up` manually after code changes. No auto-deploy on git push.
+**Reversible:** Yes — can link GitHub repo later via Railway dashboard
+
+### DEC-015 — Lifespan Handler for Migrations + Seeding Over Manual Steps
+**Date:** 2026-03-19
+**Phase:** Deployment
+**Context:** Production needs Alembic migrations and demo seed data. Could run manually or automate on startup.
+**Options considered:**
+1. Separate init container or pre-deploy script
+2. Lifespan handler in FastAPI that runs migrations + idempotent seed
+3. Document manual steps (ssh/exec into container)
+**Decision:** Option 2 — Lifespan handler with auto-migrate and idempotent seed
+**Rationale:** Evaluator needs to hit the URL and see a working app. No manual steps. The lifespan handler checks if the demo user exists — if not, it seeds. If yes, it skips. Migrations are always safe to run (Alembic tracks applied versions). Zero human intervention required.
+**Impact:** Every backend deploy automatically creates/updates schema and ensures demo data exists. Adds ~2-3 seconds to startup time.
+**Reversible:** Yes — can remove lifespan handler and switch to manual migration
+
+### DEC-016 — npm install Over npm ci in Frontend Dockerfile
+**Date:** 2026-03-19
+**Phase:** Deployment
+**Context:** `npm ci` requires package-lock.json to be exactly in sync with package.json. The lockfile had version mismatches (typescript 5.9.3 vs 4.9.5, missing yaml@2.8.2).
+**Options considered:**
+1. Fix lockfile locally and commit
+2. Use `npm install` instead of `npm ci` in Dockerfile
+**Decision:** Option 2 — Use `npm install`
+**Rationale:** `npm install` is more forgiving and resolves dependency trees on the fly. While `npm ci` is preferred for reproducible builds, the lockfile was out of sync and fixing it locally didn't fully resolve all mismatches. For a demo deployment, `npm install` is sufficient.
+**Impact:** Build may install slightly different versions than local dev. Acceptable for demo purposes.
+**Reversible:** Yes — can switch back to `npm ci` once lockfile is fully synced
+
 <!--
 INSTRUCTIONS:
-- Number sequentially from DEC-013 onward
+- Number sequentially from DEC-017 onward
 - Log BEFORE implementing
 - Every decision gets all fields
 - "I just went with X" is NOT a valid entry — explain WHY

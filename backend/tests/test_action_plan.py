@@ -83,18 +83,17 @@ class TestExperimentEligibility:
         assert ctx["experiment_eligibility"]["A2"]["eligible"] is True
         assert ctx["experiment_eligibility"]["A2"]["recommendation"] == "RECOMMENDED"
 
-    def test_b1_eligible_but_direct_action(self, db):
-        """B1 has 5 vacant, 0.79 occ, but 2 CRITICAL flags → direct action preferred."""
+    def test_b1_grade_suppressed(self, db):
+        """B1 is CRISIS grade → experiment suppressed regardless of vacancy."""
         ctx = _get_context(db, "PROP-B")
-        assert ctx["experiment_eligibility"]["B1"]["eligible"] is True
-        assert ctx["experiment_eligibility"]["B1"]["has_critical_flags"] is True
-        assert ctx["experiment_eligibility"]["B1"]["recommendation"] == "ELIGIBLE_BUT_DIRECT_ACTION_PREFERRED"
+        assert ctx["experiment_eligibility"]["B1"]["eligible"] is False
+        assert ctx["experiment_eligibility"]["B1"]["grade_suppressed"] is True
 
-    def test_b2_eligible_recommended(self, db):
-        """B2 has 6 vacant, 0.88 occ, no CRITICAL → recommended."""
+    def test_b2_grade_suppressed(self, db):
+        """B2 is DISTRESSED grade → experiment suppressed."""
         ctx = _get_context(db, "PROP-B")
-        assert ctx["experiment_eligibility"]["B2"]["eligible"] is True
-        assert ctx["experiment_eligibility"]["B2"]["recommendation"] == "RECOMMENDED"
+        assert ctx["experiment_eligibility"]["B2"]["eligible"] is False
+        assert ctx["experiment_eligibility"]["B2"]["grade_suppressed"] is True
 
 
 class TestExperimentDesigns:
@@ -110,34 +109,17 @@ class TestExperimentDesigns:
         total_units = sum(a["units_allocated"] for a in arms)
         assert total_units == 5
 
-    def test_b2_three_arm(self, db):
-        """B2 has 6 vacant + CONCESSION_TRIGGER → three-arm."""
+    def test_b2_no_experiment_design_grade_suppressed(self, db):
+        """B2 is DISTRESSED grade → no experiment design generated."""
         ctx = _get_context(db, "PROP-B")
-        design = ctx["experiment_designs"].get("B2")
-        assert design is not None
-        arms = design["arms"]
-        assert len(arms) == 3  # control, price_test, concession_test
-        total_units = sum(a["units_allocated"] for a in arms)
-        assert total_units == 6
+        assert "B2" not in ctx["experiment_designs"]
+        assert ctx["experiment_eligibility"]["B2"]["eligible"] is False
 
-    def test_b2_spread_within_config(self, db):
-        """B2 experiment spread must be within 6% or $100."""
+    def test_b1_no_experiment_design_grade_suppressed(self, db):
+        """B1 is CRISIS grade → no experiment design generated."""
         ctx = _get_context(db, "PROP-B")
-        design = ctx["experiment_designs"]["B2"]
-        assert design["spread_pct"] <= 6.0
-        assert design["spread_dollars"] <= 100
-
-    def test_b2_observation_window(self, db):
-        """Observation window matches config (14 days)."""
-        ctx = _get_context(db, "PROP-B")
-        design = ctx["experiment_designs"]["B2"]
-        assert design["observation_window_days"] == 14
-
-    def test_b1_experiment_exists_but_not_recommended(self, db):
-        """B1 is eligible so design exists, but recommendation is direct action."""
-        ctx = _get_context(db, "PROP-B")
-        assert "B1" in ctx["experiment_designs"]
-        assert ctx["experiment_eligibility"]["B1"]["recommendation"] == "ELIGIBLE_BUT_DIRECT_ACTION_PREFERRED"
+        assert "B1" not in ctx["experiment_designs"]
+        assert ctx["experiment_eligibility"]["B1"]["eligible"] is False
 
     def test_no_arm_has_zero_units(self, db):
         """Every arm in every experiment must have at least 1 unit."""
@@ -192,13 +174,14 @@ class TestBidirectionalExperiments:
         assert design["spread_pct"] <= 5.0
         assert design["spread_dollars"] <= 75
 
-    def test_occupancy_gate_prevents_upward(self, db):
-        """B2 at 88% occ: even if asking < optimal, direction is DOWN not UP."""
-        # B2: occ=0.88 < 0.92, asking=1654 < optimal~1838 → occ gate blocks UP
-        ctx = _get_context(db, "PROP-B")
-        design = ctx["experiment_designs"].get("B2")
-        assert design is not None
-        assert design["direction"] == "DOWN"
+    def test_occupancy_gate_prevents_upward(self):
+        """Low occ blocks UP direction — uses unit test instead of B2 (now grade-suppressed)."""
+        optimal_pricing = {"optimal_asking": 1838.0, "price_direction": "INCREASE"}
+        direction = _detect_experiment_direction(
+            asking=1654.0, occ=0.88, optimal_pricing=optimal_pricing,
+        )
+        # occ 0.88 < 0.92 gate → falls to DOWN
+        assert direction == "DOWN"
 
     def test_convergence_metric_is_revenue_per_day(self, db):
         """All experiment outputs include revenue_per_unit_per_day convergence metric."""

@@ -11,7 +11,7 @@ from app.models.config import ClientConfig
 from app.models.property import Property
 from app.models.user import User
 from app.models.diagnostic import AuditLog
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 from app.services.metrics_engine import compute_property_metrics
 from app.services.flag_generator import generate_flags
 
@@ -35,8 +35,13 @@ class ConfigSaveRequest(BaseModel):
 
 
 @router.get("/properties/{property_id}/config")
-def get_config(property_id: str, db: Session = Depends(get_db)):
+def get_config(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get the active config for a property."""
+    verify_property_access(db, property_id, user)
     config = db.query(ClientConfig).filter_by(
         property_id=property_id, is_active=True
     ).first()
@@ -53,6 +58,7 @@ def save_config(
     user: User = Depends(get_current_user),
 ):
     """Save a new config version, deactivating the previous."""
+    verify_property_access(db, property_id, user)
     # Deactivate current
     current = db.query(ClientConfig).filter_by(
         property_id=property_id, is_active=True
@@ -102,8 +108,13 @@ def save_config(
 
 
 @router.get("/properties/{property_id}/config/history")
-def config_history(property_id: str, db: Session = Depends(get_db)):
+def config_history(
+    property_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """List config versions for a property."""
+    verify_property_access(db, property_id, user)
     configs = (
         db.query(ClientConfig)
         .filter_by(property_id=property_id)
@@ -123,8 +134,10 @@ def preview_diagnosis(
     property_id: str,
     req: ConfigSaveRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Preview flag counts with a draft config (without saving)."""
+    verify_property_access(db, property_id, user)
     from datetime import date
     config_dict = {
         "occupancy_thresholds": req.occupancy_thresholds or {},

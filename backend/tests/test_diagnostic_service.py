@@ -199,7 +199,7 @@ class TestDiagnosticPipeline:
         assert "B2" in diagnostic_run_b.flags_json
 
     def test_b1_flag_count(self, diagnostic_run_b):
-        assert len(diagnostic_run_b.flags_json["B1"]) == 12
+        assert len(diagnostic_run_b.flags_json["B1"]) == 13
 
     def test_b2_flag_count(self, diagnostic_run_b):
         assert len(diagnostic_run_b.flags_json["B2"]) == 7
@@ -454,3 +454,87 @@ class TestFallbackDiagnosis:
         for assess in fallback["unit_type_assessments"]:
             for action in assess["recommended_actions"]:
                 assert action["action_type"] in valid_types, f"Unknown action type: {action['action_type']}"
+
+
+class TestFallbackDiagnosisEdgeCases:
+    """Edge case tests for _fallback_diagnosis with synthetic data."""
+
+    def test_fallback_with_no_revenue_efficiency(self):
+        """Fallback uses flag-based scoring when revenue_efficiency is absent."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+
+        metrics = {
+            "unit_type_metrics": {
+                "T1": {
+                    "occupancy_metrics": {"occupancy_rate": 0.85, "total_units": 20, "occupied": 17, "vacant": 3},
+                    "pricing_spreads": {"asking_rent": 1500, "predicted_rent": 1500, "comps_rent": 1500,
+                                        "in_place_rent": 1400, "base_rent": 1400, "amenity_price": 100},
+                    "revenue_metrics": {"daily_vacancy_burn": 150, "monthly_vacancy_cost": 4500},
+                    "velocity_metrics": {"avg_days_on_market": 20},
+                    "demand_metrics": {"demand_score": 0.7},
+                    "exposure_metrics": {"total_exposure_pct": 0.15},
+                    # No revenue_efficiency, revenue_gap, etc.
+                },
+            },
+            "portfolio_metrics": {},
+        }
+        all_flags = {
+            "T1": [
+                {"type": "OCCUPANCY_BELOW_ACTION", "severity": "HIGH", "value": 0.85, "threshold": 0.88},
+                {"type": "DOM_ABOVE_THRESHOLD", "severity": "MEDIUM", "value": 20, "threshold": 21},
+            ],
+        }
+        result = _fallback_diagnosis(metrics, all_flags)
+        assert result["unit_type_assessments"][0]["grade"] in ("CRISIS", "DISTRESSED", "IMBALANCED", "OPPORTUNITY", "OPTIMIZED")
+        assert result["unit_type_assessments"][0]["health_score"] > 0
+
+    def test_fallback_with_empty_flags(self):
+        """No flags → OPTIMIZED grade from flag-based scoring."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+
+        metrics = {
+            "unit_type_metrics": {
+                "T1": {
+                    "occupancy_metrics": {"occupancy_rate": 0.97, "total_units": 20, "occupied": 19, "vacant": 1},
+                    "pricing_spreads": {"asking_rent": 1500, "predicted_rent": 1500, "comps_rent": 1500,
+                                        "in_place_rent": 1400, "base_rent": 1400, "amenity_price": 100},
+                    "revenue_metrics": {"daily_vacancy_burn": 50, "monthly_vacancy_cost": 1500},
+                    "velocity_metrics": {"avg_days_on_market": 10},
+                    "demand_metrics": {"demand_score": 0.8},
+                    "exposure_metrics": {"total_exposure_pct": 0.05},
+                },
+            },
+            "portfolio_metrics": {},
+        }
+        result = _fallback_diagnosis(metrics, {"T1": []})
+        assert result["unit_type_assessments"][0]["grade"] == "OPTIMIZED"
+        assert result["unit_type_assessments"][0]["health_score"] == 85
+
+    def test_fallback_with_all_critical(self):
+        """Multiple critical flags → CRISIS grade from flag-based scoring."""
+        from app.services.diagnostic_service import _fallback_diagnosis
+
+        metrics = {
+            "unit_type_metrics": {
+                "T1": {
+                    "occupancy_metrics": {"occupancy_rate": 0.70, "total_units": 20, "occupied": 14, "vacant": 6},
+                    "pricing_spreads": {"asking_rent": 1500, "predicted_rent": 1500, "comps_rent": 1500,
+                                        "in_place_rent": 1400, "base_rent": 1400, "amenity_price": 100},
+                    "revenue_metrics": {"daily_vacancy_burn": 300, "monthly_vacancy_cost": 9000},
+                    "velocity_metrics": {"avg_days_on_market": 35},
+                    "demand_metrics": {"demand_score": 0.5},
+                    "exposure_metrics": {"total_exposure_pct": 0.30},
+                },
+            },
+            "portfolio_metrics": {},
+        }
+        all_flags = {
+            "T1": [
+                {"type": "OCCUPANCY_CRISIS", "severity": "CRITICAL", "value": 0.70, "threshold": 0.82},
+                {"type": "EXPOSURE_CRISIS", "severity": "CRITICAL", "value": 0.30, "threshold": 0.20},
+                {"type": "EXPOSURE_DETERIORATING", "severity": "CRITICAL", "value": {}, "threshold": ""},
+            ],
+        }
+        result = _fallback_diagnosis(metrics, all_flags)
+        assert result["unit_type_assessments"][0]["grade"] == "CRISIS"
+        assert result["unit_type_assessments"][0]["health_score"] == 25

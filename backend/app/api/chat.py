@@ -12,7 +12,7 @@ from app.models.property import Property
 from app.models.config import ClientConfig
 from app.models.diagnostic import DiagnosticRun, AuditLog
 from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_property_access
 from app.services.metrics_engine import compute_property_metrics
 from app.services.flag_generator import generate_flags
 from app.services.claude_client import ClaudeClient, ClaudeAPIError
@@ -21,11 +21,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
-CHAT_SYSTEM_PROMPT = """You are a senior revenue management analyst. You have access to pricing metrics for a multifamily property.
+CHAT_SYSTEM_PROMPT = """You are a senior revenue management analyst. You have access to comprehensive pricing metrics for a multifamily property.
+
+DATA YOU HAVE ACCESS TO (per unit type):
+- Occupancy, vacancy, exposure, DOM, days vacant
+- Asking, comps, predicted, in-place, executed rents
+- Optimal asking rent (revenue-maximizing price from the pricing engine)
+- Recommended asking rent (conservative step toward optimal)
+- Price direction (INCREASE/DECREASE/HOLD) and confidence level
+- Elasticity coefficient and direction (ELASTIC/INELASTIC/UNIT_ELASTIC)
+- Revenue gap: total monthly gap and breakdown by lever (vacancy_cost, new_lease_underpricing, renewal_opportunity, concession_drag)
+- Revenue efficiency score (0-100) and grade (CRISIS/DISTRESSED/IMBALANCED/OPPORTUNITY/OPTIMIZED)
+- Renewal opportunity: upcoming count, recommended increase %, monthly capture
+- Daily vacancy burn and monthly vacancy cost
+- Flags with severity levels
 
 RULES:
 - Answer with specific numbers from the metrics provided. Never invent numbers.
-- If the metrics don't contain what's needed, say what data would be needed.
+- Use the optimal_asking, elasticity, and gap_components data to answer "what if" pricing questions.
+- For price change questions: reference the gap_components to quantify impact by lever.
 - For simple questions: 1-3 sentences max.
 - For complex questions: use a short lead-in sentence, then bullet points (use "•" not "-"). Never write a wall of text.
 - Tone: senior consultant in a quick Slack exchange. Direct, specific, no fluff.
@@ -58,9 +72,7 @@ def chat(
     user: User = Depends(get_current_user),
 ) -> ChatResponse:
     """Chat with AI about property pricing metrics."""
-    prop = db.query(Property).filter_by(id=property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = verify_property_access(db, property_id, user)
 
     config = db.query(ClientConfig).filter_by(
         property_id=property_id, is_active=True
@@ -127,7 +139,12 @@ def chat(
 
     try:
         client = ClaudeClient()
-        response_text = client.call_text(CHAT_SYSTEM_PROMPT, user_msg)
+        response_text = client.call_text(
+            CHAT_SYSTEM_PROMPT,
+            user_msg,
+            max_tokens=1000,
+            timeout=25.0,
+        )
     except ClaudeAPIError as e:
         logger.error("Chat Claude call failed: %s", e)
         response_text = (
@@ -167,6 +184,13 @@ def _build_metrics_summary(metrics: dict) -> dict:
         occ = m["occupancy_metrics"]
         exp = m["exposure_metrics"]
         vel = m["velocity_metrics"]
+        # Revenue optimization sections (all optional, backward-compatible)
+        optimal = m.get("optimal_pricing", {})
+        elasticity = m.get("elasticity", {})
+        gap = m.get("revenue_gap", {})
+        renewal = m.get("renewal_opportunity", {})
+        efficiency = m.get("revenue_efficiency", {})
+
         summary[code] = {
             "occupancy": occ["occupancy_rate"],
             "vacant": occ["vacant"],
@@ -182,5 +206,21 @@ def _build_metrics_summary(metrics: dict) -> dict:
             "monthly_cost": rev["monthly_vacancy_cost"],
             "dom": vel["avg_days_on_market"],
             "days_vacant": vel["avg_days_vacant"],
+            # Revenue optimization data
+            "optimal_asking": optimal.get("optimal_asking"),
+            "recommended_asking": optimal.get("recommended_asking"),
+            "price_direction": optimal.get("price_direction"),
+            "pricing_confidence": optimal.get("confidence"),
+            "elasticity_coefficient": elasticity.get("elasticity_coefficient"),
+            "elasticity_direction": elasticity.get("direction"),
+            "elasticity_confidence": elasticity.get("confidence"),
+            "revenue_gap_monthly": gap.get("total_gap_monthly"),
+            "dominant_lever": gap.get("dominant_lever"),
+            "gap_components": gap.get("gap_components"),
+            "revenue_efficiency_score": efficiency.get("revenue_efficiency_score"),
+            "grade": efficiency.get("grade"),
+            "upcoming_renewals_90d": renewal.get("upcoming_renewals_90d"),
+            "renewal_increase_pct": renewal.get("recommended_increase_pct"),
+            "renewal_capture_monthly": renewal.get("net_monthly_capture"),
         }
     return summary

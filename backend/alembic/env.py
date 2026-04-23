@@ -13,12 +13,18 @@ from app.models import (  # noqa: F401 — ensure all models registered
     HistoricalSnapshot,
     DiagnosticRun, AuditLog,
     Experiment, ExperimentAssignment,
+    PricingDecision,
+    RenewalRule, RenewalOutput,
 )
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Override sqlalchemy.url with the app's DATABASE_URL from environment
+from app.config import settings
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 target_metadata = Base.metadata
 
